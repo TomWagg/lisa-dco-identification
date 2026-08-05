@@ -2,6 +2,7 @@ import argparse
 from cosmic.sample.stroopwafel import AdaptiveSampler, ParameterSpace, Parameter
 from cosmic.sample.stroopwafel.presets import merging_dco
 from cosmic.utils import parse_inifile
+from time import time
 
 M1_MIN = { "NSWD": 4, "NSNS": 5, "BHWD": 14, "BHNS": 16, "BHBH": 19}
 IS_INTERESTING = {
@@ -13,6 +14,8 @@ IS_INTERESTING = {
 }
 
 def create_dco_population(metallicity, inifile_path, total_systems, batch_size, dco_type, nproc, output_path):
+
+    start = time()
 
     def derive_params(sampled):
         """Provide binary parameters not drawn from the ParameterSpace."""
@@ -46,6 +49,7 @@ def create_dco_population(metallicity, inifile_path, total_systems, batch_size, 
     result = sampler.run()
 
     print(f"Finished generating {total_systems} systems for metallicity {metallicity:.2e} and DCO type {dco_type}.")
+    print(f"Time taken: {time() - start:.2f} seconds.")
 
     result.save(output_path)
 

@@ -2,7 +2,7 @@ import numpy as np
 import cogsworth
 
 class SB15PhiCut(cogsworth.sfh.SandersBinney2015):
-    def __init__(self, phi_cut, *args, **kwargs):
+    def __init__(self, phi_cut=0, *args, **kwargs):
         self.phi_cut = phi_cut
         super().__init__(*args, **kwargs)
         
@@ -32,7 +32,7 @@ class SB15PhiCut(cogsworth.sfh.SandersBinney2015):
         J_r, J_z, J_phi = J.T
 
         # only compute the DF where the prior interpolations are valid
-        df_val = np.full_like(J_r, np.nan)
+        df_val = np.zeros_like(J_r)
         valid = (J_phi >= 1e-5) & (J_phi <= 100)
 
         R_d = 3.45 if component == "thin_disc" else 2.31

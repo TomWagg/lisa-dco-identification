@@ -1,4 +1,5 @@
 import cogsworth
+import numpy as np
 
 class StroopPop(cogsworth.pop.Population):
     def __init__(self, stroop_sample, n_binaries, *args, **kwargs):

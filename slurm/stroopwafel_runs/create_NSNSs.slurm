@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=2:00:00
-#SBATCH -o /mnt/home/twagg/projects/frank-lisa/stroopwafel_runs/logs/NSNS_fiducial_%a_%A.out
-#SBATCH -e /mnt/home/twagg/projects/frank-lisa/stroopwafel_runs/logs/NSNS_fiducial_%a_%A.err
+#SBATCH -o /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/NSNS_fiducial_%a_%A.out
+#SBATCH -e /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/NSNS_fiducial_%a_%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=twagg@flatironinstitute.org
 #SBATCH --export=all

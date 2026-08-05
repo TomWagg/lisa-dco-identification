@@ -1,12 +1,12 @@
 #!/bin/bash
 ## Job Name
-#SBATCH --job-name=BHNS_lisa
+#SBATCH --job-name=BHBH_lisa
 #SBATCH --partition=cca,gen
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=2:00:00
-#SBATCH -o /mnt/home/twagg/projects/frank-lisa/stroopwafel_runs/logs/BHNS_fiducial_%a_%A.out
-#SBATCH -e /mnt/home/twagg/projects/frank-lisa/stroopwafel_runs/logs/BHNS_fiducial_%a_%A.err
+#SBATCH -o /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/BHBH_fiducial_%a_%A.out
+#SBATCH -e /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/BHBH_fiducial_%a_%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=twagg@flatironinstitute.org
 #SBATCH --export=all
@@ -20,7 +20,7 @@ METS=($(python -c "import numpy as np; print(' '.join(map(str, np.logspace(-4, n
 # select a metallicity based on the SLURM_ARRAY_TASK_ID
 MET=${METS[$SLURM_ARRAY_TASK_ID]}
 
-echo "Starting BHNS simulation with metallicity: $MET"
+echo "Starting BHBH simulation with metallicity: $MET"
 
 # run the distributed underworld simulation
 python /mnt/home/twagg/projects/frank-lisa/src/create_dco_population.py \
@@ -28,6 +28,6 @@ python /mnt/home/twagg/projects/frank-lisa/src/create_dco_population.py \
     --inifile /mnt/home/twagg/projects/frank-lisa/src/params.ini \
     --total_systems 2000000 \
     --batch_size 25000 \
-    --dco_type BHNS \
+    --dco_type BHBH \
     --nproc 64 \
-    --output_path /mnt/ceph/users/twagg/lisa-dcos/fiducial/BHNS_Z_$MET.h5
+    --output_path /mnt/ceph/users/twagg/lisa-dcos/fiducial/BHBH_Z_$MET.h5
