@@ -126,6 +126,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     # first pass: mask out systems that have merged or not yet formed DCOs
     sources = p.to_legwork_sources(distances=np.full(len(p), 8.0) * u.kpc)
+    sources.update_sc_params({
+        "t_obs": 10 * u.yr
+    })
     sources.get_merger_time(exact=False)
     is_inspiraling = (
         (p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr) &                   # has formed a BHBH
@@ -138,6 +141,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     # second pass: mask out systems that are not detectable by LISA at 10 parsecs before integrating orbits
     sources_insp = p_insp.to_legwork_sources(distances=np.full(len(p_insp), 10.0) * u.pc)
+    sources_insp.update_sc_params({
+        "t_obs": 10 * u.yr
+    })
     sources_insp.evolve_sources(t_evol=p_insp.initial_galaxy.tau)
     sources_insp.get_snr()
     p_insp_loud = p_insp[sources_insp.snr > 7]
@@ -148,6 +154,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     # final pass: evolve the loud systems through the Milky Way and calculate their SNRs at true distances
     p_insp_loud.perform_galactic_evolution(progress_bar=False)
     sources_insp_loud = p_insp_loud.to_legwork_sources(assume_mw_galactocentric=True)
+    sources_insp_loud.update_sc_params({
+        "t_obs": 10 * u.yr
+    })
     sources_insp_loud.evolve_sources(t_evol=p_insp_loud.initial_galaxy.tau)
     sources_insp_loud.get_snr()
 
