@@ -8,26 +8,22 @@ import numpy as np
 
 import sys
 sys.path.append("../helpers")
+import const
 
 import gala.potential as gp
 import cogsworth
 
 
 # CONSTANTS STUFF
-Z_BIN_CENTRES = np.logspace(-4, np.log10(0.03), 50).round(5)
-BIN_WIDTH = (np.log10(Z_BIN_CENTRES)[1] - np.log10(Z_BIN_CENTRES)[0]) / 2
-Z_BIN_EDGES = np.logspace(np.log10(Z_BIN_CENTRES[0]) - BIN_WIDTH, np.log10(Z_BIN_CENTRES[-1]) + BIN_WIDTH, 51)
-Z_BIN_EDGES[0] = Z_BIN_CENTRES[0]
-Z_BIN_EDGES[-1] = Z_BIN_CENTRES[-1]
 
 SB15 = cogsworth.sfh.SandersBinney2015(potential=gp.MilkyWayPotential(version='v2'))
 
-WEIGHTS_PATH = "/mnt/home/twagg/projects/frank-lisa/notebooks/MW_Z_weights.npy"
+WEIGHTS_PATH = "/mnt/home/twagg/projects/frank-lisa/data/MW_Z_weights.npy"
 if os.path.isfile(WEIGHTS_PATH):
     MW_weights = np.load(WEIGHTS_PATH)
 else:
     SB15.sample(10_000_000)
-    counts, _ = np.histogram(SB15.Z.value, bins=Z_BIN_EDGES)
+    counts, _ = np.histogram(SB15.Z.value, bins=const.Z_BIN_EDGES)
     MW_weights = counts / np.sum(counts)
     np.save(WEIGHTS_PATH, MW_weights)
 
@@ -44,7 +40,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     lap = time.time()
 
     # work out the target number of systems in each metallicity bin, for galaxy sampling
-    target_counts, _ = np.histogram(rand_sample["metallicity"].values, bins=Z_BIN_EDGES)
+    target_counts, _ = np.histogram(rand_sample["metallicity"].values, bins=const.Z_BIN_EDGES)
     sample_size = target_counts.sum() * 8
 
     # loop variables
@@ -65,7 +61,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
             if counts[i] == target_counts[i]:
                 continue
 
-            matches = (Z_BIN_EDGES[i] <= SB15.Z.value) & (SB15.Z.value < Z_BIN_EDGES[i+1])
+            matches = (const.Z_BIN_EDGES[i] <= SB15.Z.value) & (SB15.Z.value < const.Z_BIN_EDGES[i+1])
             if matches.sum() == 0:
                 continue
             elif matches.sum() > target_counts[i] - counts[i]:
@@ -195,8 +191,8 @@ def main():
     all_kick_infos = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_kick_info.h5"), key="kick_info")
 
     all_formation_rows["MW_Z_weight"] = 0.0
-    for Z in Z_BIN_CENTRES:
-        all_formation_rows.loc[all_formation_rows["metallicity"] == Z, "MW_Z_weight"] = MW_weights[np.digitize(Z, Z_BIN_CENTRES) - 1]
+    for Z in const.Z_BIN_CENTRES:
+        all_formation_rows.loc[all_formation_rows["metallicity"] == Z, "MW_Z_weight"] = const.MW_weights[np.digitize(Z, const.Z_BIN_CENTRES) - 1]
 
     f_detects = []
     p_detects = []
