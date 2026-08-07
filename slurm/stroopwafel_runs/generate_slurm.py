@@ -1,3 +1,5 @@
+import os
+
 TEMPLATE = r"""#!/bin/bash
 ## Job Name
 #SBATCH --job-name=DCO_TYPE_lisa
@@ -5,8 +7,8 @@ TEMPLATE = r"""#!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=2:00:00
-#SBATCH -o /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/DCO_TYPE_fiducial_%a_%A.out
-#SBATCH -e /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/DCO_TYPE_fiducial_%a_%A.err
+#SBATCH -o /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/DCO_TYPE_VARIATION_%a_%A.out
+#SBATCH -e /mnt/home/twagg/projects/frank-lisa/slurm/stroopwafel_runs/logs/DCO_TYPE_VARIATION_%a_%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=twagg@flatironinstitute.org
 #SBATCH --export=all
@@ -25,14 +27,17 @@ echo "Starting DCO_TYPE simulation with metallicity: $MET"
 # run the distributed underworld simulation
 python /mnt/home/twagg/projects/frank-lisa/src/create_dco_population.py \
     --metallicity $MET \
-    --inifile /mnt/home/twagg/projects/frank-lisa/src/params.ini \
+    --inifile /mnt/home/twagg/projects/frank-lisa/settings/params_VARIATION.ini \
     --total_systems 2000000 \
     --batch_size 25000 \
     --dco_type DCO_TYPE \
     --nproc 64 \
-    --output_path /mnt/ceph/users/twagg/lisa-dcos/fiducial/DCO_TYPE_Z_$MET.h5
+    --output_path /mnt/ceph/users/twagg/lisa-dcos/VARIATION/stroopwafel_files/DCO_TYPE_Z_$MET.h5
 """
 
-for dco_type in ["NSWD", "NSNS", "BHWD", "BHNS", "BHBH"]:
-    with open(f"create_{dco_type}s.slurm", "w") as f:
-        f.write(TEMPLATE.replace("DCO_TYPE", dco_type))
+os.makedirs("jobs", exist_ok=True)
+for variation in ["fiducial"]:
+    os.makedirs(os.path.join("jobs", variation), exist_ok=True)
+    for dco_type in ["NSWD", "NSNS", "BHWD", "BHNS", "BHBH"]:
+        with open(os.path.join("jobs", variation, f"create_{dco_type}s.slurm"), "w") as f:
+            f.write(TEMPLATE.replace("DCO_TYPE", dco_type).replace("VARIATION", variation))
