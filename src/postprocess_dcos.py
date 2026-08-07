@@ -13,16 +13,17 @@ kstar_masks = {
     "BHNS": ([14], [13]),
     "BHBH": ([14], [14])
 }
-FOLDER = "/mnt/ceph/users/twagg/lisa-dcos/fiducial"
 
 
-def postprocess(dco_type):
+def postprocess(dco_type, folder):
+    input_folder = os.path.join(folder, "stroopwafel_files")
+
     start_time = time()
     print(f"Processing {dco_type}...")
     kstars = kstar_masks[dco_type]
 
     files = []
-    for file in os.listdir(FOLDER):
+    for file in os.listdir(input_folder):
         if file.startswith(f"{dco_type}_Z_"):
             files.append(file)
 
@@ -34,8 +35,8 @@ def postprocess(dco_type):
         print(f"\n\nStarting {file}")
 
         # load initC and bpp
-        initC = load_initC(f"{FOLDER}/{file}", key="initC")
-        bpp = pd.read_hdf(f"{FOLDER}/{file}", key="bpp")
+        initC = load_initC(f"{input_folder}/{file}", key="initC")
+        bpp = pd.read_hdf(f"{input_folder}/{file}", key="bpp")
 
         print(f"    [{time() - file_start_time:.2f}s] Loaded initC and bpp")
         lap = time()
@@ -60,7 +61,7 @@ def postprocess(dco_type):
             formation_rows["metallicity"] = initC["metallicity"].iloc[0]
 
             # read in the AIS weights from STROOPWAFEL
-            with h5.File(f"{FOLDER}/{file}", "r") as f:
+            with h5.File(f"{input_folder}/{file}", "r") as f:
                 formation_rows["weights"] = f["stroopwafel"]["weights"][...][f["stroopwafel"]["is_hit"][...]]
 
             print(f"    [{time() - lap:.2f}s] Found formation rows and weights")
@@ -71,7 +72,7 @@ def postprocess(dco_type):
 
             pessimistic = (dco_forming_bpp["evol_type"] == 7) & (
                 ((dco_forming_bpp["RRLO_1"] > 1) & (dco_forming_bpp["kstar_1"].isin([0,1,2,7,8,10,11,12]))) |
-                ((dco_forming_bpp["RRLO_1"] > 2) & (dco_forming_bpp["kstar_2"].isin([0,1,2,7,8,10,11,12])))
+                ((dco_forming_bpp["RRLO_2"] > 1) & (dco_forming_bpp["kstar_2"].isin([0,1,2,7,8,10,11,12])))
             )
             fail_pessimistic = dco_forming_bpp[pessimistic]["bin_num"]
             formation_rows["remove_if_pessimistic"] = formation_rows["bin_num"].isin(fail_pessimistic)
@@ -81,14 +82,14 @@ def postprocess(dco_type):
         print(f"  [{time() - file_start_time:.2f}s] Finishing processing {file}")
 
     all_formation_rows = pd.concat(formation_rows_list, ignore_index=True)
-    all_formation_rows.to_hdf(f"{FOLDER}/{dco_type}_formation_rows.h5", key="formation_rows", mode="w")
+    all_formation_rows.to_hdf(f"{folder}/{dco_type}_formation_rows.h5", key="formation_rows", mode="w")
 
-    kick_infos = [pd.read_hdf(f"{FOLDER}/{file}", key="kick_info")[
+    kick_infos = [pd.read_hdf(f"{input_folder}/{file}", key="kick_info")[
         ["tphys", "star", "delta_vsysx_1", "delta_vsysy_1", "delta_vsysz_1", "bin_num"]
-    ] for file in os.listdir(FOLDER) if file.startswith(f"{dco_type}_Z_")]
+    ] for file in os.listdir(input_folder) if file.startswith(f"{dco_type}_Z_")]
     all_kick_infos = pd.concat(kick_infos, ignore_index=True)
     all_kick_infos.index = all_kick_infos.index.values // 2
-    all_kick_infos.to_hdf(f"{FOLDER}/{dco_type}_kick_info.h5", key="kick_info", mode="w")
+    all_kick_infos.to_hdf(f"{folder}/{dco_type}_kick_info.h5", key="kick_info", mode="w")
 
     print(f"Finished processing {dco_type} in {time() - start_time:.2f}s")
 
@@ -96,10 +97,13 @@ def postprocess(dco_type):
 def main():
     parser = argparse.ArgumentParser(description="Postprocess DCOS")
     parser.add_argument("-d", "--dco_type", type=str, choices=kstar_masks.keys(), help="Type of DCO to process")
+    parser.add_argument("-f", "--folder", type=str, required=True, help="Folder containing the STROOPWAFEL files")
     args = parser.parse_args()
 
-    postprocess(args.dco_type)
+    postprocess(args.dco_type, args.folder)
 
 
 if __name__ == "__main__":
     main()
+
+# python postprocess_dcos.py -d BHBH -f /mnt/ceph/users/twagg/lisa-dcos/fiducial
