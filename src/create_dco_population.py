@@ -4,7 +4,11 @@ from cosmic.sample.stroopwafel.presets import merging_dco
 from cosmic.utils import parse_inifile
 from time import time
 
-M1_MIN = { "NSWD": 4, "NSNS": 5, "BHWD": 14, "BHNS": 16, "BHBH": 19}
+import sys
+sys.path.append("/mnt/home/twagg/projects/frank-lisa/helpers")
+import const
+
+
 IS_INTERESTING = {
     "NSWD": merging_dco(kstar_1=[13], kstar_2=[10, 11, 12]),
     "NSNS": merging_dco(kstar_1=[13], kstar_2=[13]),
@@ -22,7 +26,7 @@ def create_dco_population(metallicity, inifile_path, total_systems, batch_size, 
         return {'mass_2': sampled['mass_1'] * sampled['q'], "metallicity": metallicity}
 
     param_list = [
-        Parameter('mass_1', M1_MIN[dco_type], 150.0, dist='kroupa'),
+        Parameter('mass_1', const.M1_MIN[dco_type], 150.0, dist='kroupa'),
         Parameter('q', 0.0, 1.0, dist='uniform'),
         Parameter('porb', 10**(0.15), 10**(5.5),  dist='sana'),
         Parameter('ecc', 1e-9, 0.9999, dist='sana_ecc'),
