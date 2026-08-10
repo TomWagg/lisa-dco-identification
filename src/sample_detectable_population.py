@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
 
 import sys
 sys.path.append("/mnt/home/twagg/projects/frank-lisa/helpers/")
@@ -29,7 +30,8 @@ else:
 
 
 
-def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance=500_000, oversample_factor=8):
+def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance=500_000, oversample_factor=8,
+                              retain_intrinsic=False):
     lap = time.time()
 
     # draw a random sample, weighted by the Milky Way metallicity distribution
@@ -121,54 +123,80 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     lap = time.time()
 
     # first pass: mask out systems that have merged or not yet formed DCOs
-    sources = p.to_legwork_sources(distances=np.full(len(p), 8.0) * u.kpc)
+    sources = p.to_legwork_sources(distances=np.full(len(p), 10.0) * u.pc)
     sources.get_merger_time(exact=False)
     is_inspiraling = (
         (p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr) &                   # has formed a BHBH
         (p.initial_galaxy.tau <= sources.t_merge + p.bpp["tphys"].values * u.Myr)   # but hasn't merged yet
     )
     p_insp = p[is_inspiraling]
+    sources_insp = sources[is_inspiraling]
 
     print(f"  [{time.time() - lap:03.1f}s] After first pass, {len(p_insp)} systems are inspiraling at present day")
     lap = time.time()
 
     # second pass: mask out systems that have frequencies below 1e-6 Hz at present day
-    sources_insp = p_insp.to_legwork_sources(distances=np.full(len(p_insp), 10.0) * u.pc)
+    # if not retaining the intrinsic population, hone down to just the systems that
+    # are loud enough to be detectable by LISA at 10 pc
     sources_insp.evolve_sources(t_evol=p_insp.initial_galaxy.tau - p_insp.bpp["tphys"].values * u.Myr)
-    p_high_freq = p_insp[sources_insp.f_orb > 1e-6 * u.Hz]
 
-    print(f"  [{time.time() - lap:03.1f}s] After second pass, {len(p_high_freq)} systems are loud enough to be detectable by LISA at 10 pc")
+    mask = sources_insp.f_orb > 1e-6 * u.Hz
+    if not retain_intrinsic:
+        sources_insp.sc_params["t_obs"] = 10 * u.yr
+        sources_insp.get_snr()
+        mask &= (sources_insp.snr > 7)
+
+    p_masked = p_insp[mask]
+
+    last_words = "have frequencies above 1e-6 Hz" if retain_intrinsic else "are loud enough to be detectable by LISA at 10 pc"
+    print(f"  [{time.time() - lap:03.1f}s] After second pass, {len(p_masked)} systems {last_words}")
     lap = time.time()
 
     # final pass: evolve the loud systems through the Milky Way and calculate their SNRs at true distances
-    p_high_freq.perform_galactic_evolution(progress_bar=False)
+    p_masked.perform_galactic_evolution(progress_bar=False)
     print(f"  [{time.time() - lap:03.1f}s] Finished integrating the Galactic orbits of those systems through the Milky Way")
     lap = time.time()
 
-    sources_insp_loud = p_high_freq.to_legwork_sources(assume_mw_galactocentric=True)
-    sources_insp_loud.update_sc_params({
-        "t_obs": 10 * u.yr,
-    })
-    sources_insp_loud.evolve_sources(t_evol=p_high_freq.initial_galaxy.tau - p_high_freq.bpp["tphys"].values * u.Myr)
-    sources_insp_loud.get_snr()
+    sources_insp_masked = sources_insp[np.isin(p_insp.bin_nums, p_masked.bin_nums)]
+    sources_insp_masked.sc_params["t_obs"] = 10 * u.yr
 
-    print(f"  [{time.time() - lap:03.1f}s] After final pass, {np.sum(sources_insp_loud.snr > 7)} systems are detectable by LISA at their true distances over a 10 year mission")
-    lap = time.time()
+    initial_distance = SkyCoord(
+        x=p_masked.initial_galaxy.x, y=p_masked.initial_galaxy.y, z=p_masked.initial_galaxy.z,
+        v_x=p_masked.initial_galaxy.v_x, v_y=p_masked.initial_galaxy.v_y, v_z=p_masked.initial_galaxy.v_z,
+        representation_type="cartesian", unit=u.kpc, frame="galactocentric"
+    ).icrs.distance
 
-    # sum up the weights for the detectable systems and the total population
-    weights_detect = np.sum(p_high_freq.bpp[sources_insp_loud.snr > 7]["weights"])
+    instruments = ["LISA", "DECIGO"]
+    positions = [("initial_pos", initial_distance),
+                 ("final_pos", p_masked.get_final_mw_skycoord().icrs.distance)]
+
+    detectable_any_method = np.zeros(len(p_masked), dtype=bool)
+    f_detects = {}
     weights_all = np.sum(p.bpp["weights"])
 
-    p_high_freq.bpp["snr_lisa_10yr"] = sources_insp_loud.snr
+    for instrument in instruments:
+        for pos_name, pos in positions:
+            sources_insp_masked.sc_params["instrument"] = instrument
+            sources_insp_masked.dist = pos
+            snr = sources_insp_masked.get_snr()
+            p_masked.bpp[f"snr_{instrument.lower()}_10yr_{pos_name}"] = snr
+            detectable_any_method |= (snr > 7)
+            f_detects[f"{instrument.lower()}_10yr_{pos_name}"] = np.sum(p_masked.bpp[snr > 7]["weights"]) / weights_all
+
+    print(f"  [{time.time() - lap:03.1f}s] After final pass, {np.sum(detectable_any_method)} systems are detectable by LISA or DECIGO at 10 pc, either at their initial or final positions")
+    lap = time.time()
+
+    # throw out undetectable systems if we're not retaining the intrinsic population
+    if not retain_intrinsic:
+        p_masked = p_masked[detectable_any_method]
 
     # et voila, a detectable fraction for this Milky Way instance
-    f_detect = weights_detect / weights_all
-    p_high_freq._mass_binaries = 0.0
-    p_high_freq._mass_singles = 0.0
-    p_high_freq._n_singles_req = 0
-    p_high_freq._n_bin_req = 0
+    p_masked._mass_binaries = 0.0
+    p_masked._mass_singles = 0.0
+    p_masked._n_singles_req = 0
+    p_masked._n_bin_req = 0
 
-    return f_detect, p_high_freq
+    return f_detects, p_masked
 
 
 def main():
@@ -180,6 +208,7 @@ def main():
     parser.add_argument("-o", "--output_folder", type=str, required=True, help="Path to the folder where the output files will be saved.")
     parser.add_argument("-s", "--suffix", type=str, default="", help="Suffix to add to the output files.")
     parser.add_argument("-p", "--pessimistic", action="store_true", help="Use the pessimistic CE assumption when calculating the detectable fraction.")
+    parser.add_argument("-r", "--retain_intrinsic", action="store_true", help="Retain the intrinsic population of DCOs, rather than just the detectable ones.")
 
     args = parser.parse_args()
 
@@ -196,24 +225,30 @@ def main():
     for Z in const.Z_BIN_CENTRES:
         all_formation_rows.loc[all_formation_rows["metallicity"] == Z, "MW_Z_weight"] = MW_weights[np.digitize(Z, const.Z_BIN_CENTRES) - 1]
 
-    f_detects = []
+    f_detects = {}
     p_mws = []
     for inst in range(args.n_instances):
         print(f"Running Milky Way instance {inst + 1}/{args.n_instances}...")
         start = time.time()
+        if args.retain_intrinsic:
+            print("Retaining the intrinsic population of DCOs.")
         f_detect, p_mw = evolve_milky_way_instance(
             all_formation_rows, all_kick_infos, n_per_instance=args.n_per_instance,
-            oversample_factor=10 if args.dco_type == "NSWD" else 8
+            oversample_factor=10 if args.dco_type == "NSWD" else 8,
+            retain_intrinsic=args.retain_intrinsic
         )
         p_mw.bpp["MW_instance"] = inst
-        f_detects.append(f_detect)
+        for key in f_detect.keys():
+            if key not in f_detects:
+                f_detects[key] = [f_detect[key]]
+        else:
+            f_detects[key].append(f_detect[key])
         p_mws.append(p_mw)
-        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction: {f_detect:.4e}")
+        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction for LISA final position: {f_detect['LISA_10yr_final_pos']:.4e}")
 
     p_mw_all = cogsworth.pop.concat(*p_mws)
-    f_detect_mean = np.mean(f_detects)
-    f_detect_std = np.std(f_detects)
-    print(f"Mean detectable fraction: {f_detect_mean:.4e} ± {f_detect_std:.4e}")
+    f_detect_df = pd.DataFrame(f_detects)
+    print(f"Mean detectable fraction for LISA 10yr final pos: {f_detect_df['LISA_10yr_final_pos'].mean():.4e} ± {f_detect_df['LISA_10yr_final_pos'].std():.4e}")
 
     sfh = cogsworth.sfh.StarFormationHistory()
     for var in ["_x", "_y", "_z", "_v_x", "_v_y", "_v_z", "_tau", "_Z"]:
@@ -222,8 +257,8 @@ def main():
 
     pessimistic_str = "_pessimistic" if args.pessimistic else ""
 
-    p_mw_all.save(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_detectable_{args.suffix}.h5"), overwrite=True)
-    np.save(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_f_detect_{args.suffix}.npy"), np.array(f_detects))
+    p_mw_all.save(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_in_band_{args.suffix}.h5"), overwrite=True)
+    f_detect_df.to_hdf(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_f_detect_{args.suffix}.h5"), key="f_detect", mode="w")
 
     print(f"Saved detectable population and detectable fractions to {args.output_folder}.")
     print(f"Total time for {args.n_instances} instances: {time.time() - full_start:.2f} seconds.\n\n\n")
@@ -232,4 +267,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python sample_detectable_population.py -f /mnt/ceph/users/twagg/lisa-dcos/fiducial/BHBH/ -d BHBH -N 500000 -n 1 -o /mnt/ceph/users/twagg/lisa-dcos/fiducial -s test
+# python sample_detectable_population.py -f /mnt/ceph/users/twagg/lisa-dcos/fiducial/ -d BHBH -N 500000 -n 1 -o /mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files -s test
