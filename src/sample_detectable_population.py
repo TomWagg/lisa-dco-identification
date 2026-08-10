@@ -124,13 +124,26 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     # first pass: mask out systems that have merged or not yet formed DCOs
     sources = p.to_legwork_sources(distances=np.full(len(p), 10.0) * u.pc)
+    sources.n_proc = 2
     sources.get_merger_time(exact=False)
-    is_inspiraling = (
-        (p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr) &                   # has formed a BHBH
-        (p.initial_galaxy.tau <= sources.t_merge + p.bpp["tphys"].values * u.Myr)   # but hasn't merged yet
+    is_inspiraling_approx = (
+        (p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr) &        # has formed a BHBH
+        (p.initial_galaxy.tau <= sources.t_merge
+                                 + p.bpp["tphys"].values * u.Myr
+                                 + 100 * u.Myr)                          # but won't merge for at least 100 Myr
     )
-    p_insp = p[is_inspiraling]
-    sources_insp = sources[is_inspiraling]
+    sources_maybe_insp = sources[is_inspiraling_approx]
+    p_maybe_insp = p[is_inspiraling_approx]
+
+
+    sources_maybe_insp.get_merger_time(exact=True)
+    is_inspiraling = (
+        (p_maybe_insp.initial_galaxy.tau >= p_maybe_insp.bpp["tphys"].values * u.Myr) &  # has formed a BHBH
+        (p_maybe_insp.initial_galaxy.tau <= sources_maybe_insp.t_merge
+                                            + p_maybe_insp.bpp["tphys"].values * u.Myr)  # but hasn't merged yet
+    )
+    p_insp = p_maybe_insp[is_inspiraling]
+    sources_insp = sources_maybe_insp[is_inspiraling]
 
     print(f"  [{time.time() - lap:03.1f}s] After first pass, {len(p_insp)} systems are inspiraling at present day")
     lap = time.time()
@@ -188,13 +201,18 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     # throw out undetectable systems if we're not retaining the intrinsic population
     if not retain_intrinsic:
-        p_masked = p_masked[detectable_any_method]
+        if np.sum(detectable_any_method) == 0:
+            print("  No systems are detectable by LISA or DECIGO at 10 pc, either at their initial or final positions. Returning an empty population.")
+            p_masked = None
+        else:
+            p_masked = p_masked[detectable_any_method]
 
     # et voila, a detectable fraction for this Milky Way instance
-    p_masked._mass_binaries = 0.0
-    p_masked._mass_singles = 0.0
-    p_masked._n_singles_req = 0
-    p_masked._n_bin_req = 0
+    if p_masked is not None:
+        p_masked._mass_binaries = 0.0
+        p_masked._mass_singles = 0.0
+        p_masked._n_singles_req = 0
+        p_masked._n_bin_req = 0
 
     return f_detects, p_masked
 
@@ -225,7 +243,7 @@ def main():
     for Z in const.Z_BIN_CENTRES:
         all_formation_rows.loc[all_formation_rows["metallicity"] == Z, "MW_Z_weight"] = MW_weights[np.digitize(Z, const.Z_BIN_CENTRES) - 1]
 
-    f_detects = {}
+    f_detect_dict = {}
     p_mws = []
     for inst in range(args.n_instances):
         print(f"Running Milky Way instance {inst + 1}/{args.n_instances}...")
@@ -237,18 +255,22 @@ def main():
             oversample_factor=10 if args.dco_type == "NSWD" else 8,
             retain_intrinsic=args.retain_intrinsic
         )
-        p_mw.bpp["MW_instance"] = inst
+        print(f_detect)
+        if p_mw is not None:
+            p_mw.bpp["MW_instance"] = inst
+            p_mws.append(p_mw)
+
         for key in f_detect.keys():
-            if key not in f_detects:
-                f_detects[key] = [f_detect[key]]
-        else:
-            f_detects[key].append(f_detect[key])
-        p_mws.append(p_mw)
-        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction for LISA final position: {f_detect['LISA_10yr_final_pos']:.4e}")
+            print(key, f_detect[key])
+            if key not in f_detect_dict:
+                f_detect_dict[key] = [f_detect[key]]
+            else:
+                f_detect_dict[key].append(f_detect[key])
+        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction for LISA final position: {f_detect['lisa_10yr_final_pos']:.4e}")
 
     p_mw_all = cogsworth.pop.concat(*p_mws)
-    f_detect_df = pd.DataFrame(f_detects)
-    print(f"Mean detectable fraction for LISA 10yr final pos: {f_detect_df['LISA_10yr_final_pos'].mean():.4e} ± {f_detect_df['LISA_10yr_final_pos'].std():.4e}")
+    f_detect_df = pd.DataFrame(f_detect_dict)
+    print(f"Mean detectable fraction for LISA 10yr final pos: {f_detect_df['lisa_10yr_final_pos'].mean():.4e}")
 
     sfh = cogsworth.sfh.StarFormationHistory()
     for var in ["_x", "_y", "_z", "_v_x", "_v_y", "_v_z", "_tau", "_Z"]:
