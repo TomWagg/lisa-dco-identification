@@ -255,13 +255,11 @@ def main():
             oversample_factor=10 if args.dco_type == "NSWD" else 8,
             retain_intrinsic=args.retain_intrinsic
         )
-        print(f_detect)
         if p_mw is not None:
             p_mw.bpp["MW_instance"] = inst
             p_mws.append(p_mw)
 
         for key in f_detect.keys():
-            print(key, f_detect[key])
             if key not in f_detect_dict:
                 f_detect_dict[key] = [f_detect[key]]
             else:
