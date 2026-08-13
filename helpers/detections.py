@@ -286,7 +286,7 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
 def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco_types=None,
                     colours=None, duration=10, data_dir=DATA_DIR, width=0.6, pos_dodge=0.09,
                     log=True, floor=0.1, sharey=False, fig=None, ax=None, show=True,
-                    detections=None):
+                    detections=None, save=None, show_sec_ax=False):
     """Plot the number of detectable DCOs for each model variation.
 
     Each (model, variant) pair gets its own position on the x-axis, DCO types are
@@ -365,18 +365,19 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
 
     if fig is None or ax is None:
         fig, ax = plt.subplots(len(detectors), 1, sharex=True, sharey=sharey,
-                               figsize=(max(1.6 * len(columns) + 4, 10), 6 * len(detectors)), layout="tight")
+                               figsize=(max(1.6 * len(columns) + 4, 10), 6 * len(detectors)),
+                               layout="constrained")
     axes = np.atleast_1d(ax)
 
     # spread the DCO types evenly within each column, then split initial/final about that
     n_dco = len(dco_types)
-    shifts = np.linspace(-width / 3, width / 3, n_dco) if n_dco > 1 else np.zeros(1)
+    shifts = np.linspace(-width / 2, width / 2, n_dco) if n_dco > 1 else np.zeros(1)
 
     for axis, detector in zip(axes, detectors):
         for d_ind, dco in enumerate(dco_types):
             for pos in POSITIONS:
                 filled = pos == "final_pos"
-                offset = shifts[d_ind] + (pos_dodge / 3 if filled else -pos_dodge / 3)
+                offset = shifts[d_ind] + (pos_dodge / 4 if filled else -pos_dodge / 4)
 
                 x, mid, lower, upper = [], [], [], []
                 for c_ind, (model, variant) in enumerate(columns):
@@ -401,9 +402,18 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                               markeredgecolor=colours[dco], markeredgewidth=1.5, elinewidth=1.5,
                               capsize=3, linestyle="none", zorder=3)
 
+
+        if show_sec_ax:
+            # a constant rescaling, so the inverse is just the reciprocal
+            sec_ax = axis.secondary_yaxis(
+                "right",
+                functions=(lambda y, f=np.sqrt(10/4): y * f,
+                        lambda y, f=np.sqrt(10/4): y / f))
+            sec_ax.set_ylabel(f"Approximate number of\ndetections (10 yr)")
+
         # faint dividers between each pair of columns
         for c_ind in range(1, len(columns)):
-            axis.axvline(c_ind - 0.5, color="lightgrey", linestyle="dotted", linewidth=1, zorder=0)
+            axis.axvline(c_ind - 0.5, color="grey", linestyle="dotted", linewidth=2, zorder=0)
 
         axis.set_xticks(range(len(columns)))
         axis.set_xlim(-0.5, len(columns) - 0.5)
@@ -422,14 +432,112 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                           markeredgecolor="grey", markeredgewidth=1.5)
                    for pos in POSITIONS]
 
-    print(dco_handles)
-    axes[0].add_artist(axes[0].legend(handles=dco_handles, loc="lower center",
-                                      ncols=len(dco_types), handletextpad=0.0,
-                                      columnspacing=0.5, bbox_to_anchor=(0.5, 1.0)))
+    pos_legend = axes[0].legend(handles=pos_handles, loc="lower left", title="Location")
+    axes[0].add_artist(pos_legend)
 
-    axes[0].legend(handles=pos_handles, loc="lower left", frameon=True, title="Location")
+    axes[0].legend(handles=dco_handles, loc="lower center", ncols=len(dco_types),
+                   handletextpad=0.0, columnspacing=0.5, bbox_to_anchor=(0.5, 1.02))
+
+    if save is not None:
+        plt.savefig(save)
 
     if show:
         plt.show()
 
     return fig, ax if len(detectors) > 1 else axes[0]
+
+
+def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
+                    missing=r"\nodata", label="tab:n_targets", caption=None, starred=False,
+                    just_tabular=True):
+    """Write a LaTeX table of the normalisation constants for each DCO type.
+
+    Rows are DCO types and each model spans a pair of columns for the optimistic and
+    pessimistic common-envelope assumptions, matching the layout of `detection_table`.
+
+    Parameters
+    ----------
+    models : `list` of `str`
+        Model variation names (also the `n_targets` index)
+    n_targets : `pandas.DataFrame`
+        Total number of targets, indexed by model with columns of `{dco_type}{variant}`
+    model_labels : `dict`, optional
+        Mapping from model name to the label to print, by default the name itself
+    dco_types : `list` of `str`, optional
+        DCO types to tabulate, by default `DCO_TYPES`
+    sig : `int`, optional
+        Significant figures to show, by default 2
+    missing : `str`, optional
+        Placeholder for combinations that are absent from `n_targets`, by default ``\\nodata``
+    label : `str`, optional
+        LaTeX label for the table
+    caption : `str`, optional
+        Table caption
+    starred : `bool`, optional
+        Whether to use a `table*` environment, by default False
+    just_tabular : `bool`, optional
+        Whether to return only the `tabular` environment, by default True
+
+    Returns
+    -------
+    table : `str`
+        The LaTeX table
+    """
+    model_labels = {} if model_labels is None else model_labels
+    dco_types = DCO_TYPES if dco_types is None else dco_types
+
+    n_data_cols = len(models) * len(VARIANTS)
+    env = "table*" if starred else "table"
+
+    if not just_tabular:
+        lines = [
+            rf"\begin{{{env}}}",
+            r"\centering",
+            rf"\caption{{{caption if caption is not None else ''}}}",
+            rf"\label{{{label}}}",
+        ]
+    else:
+        lines = []
+
+    lines.extend([
+        r"\begin{tabular}{l" + "c" * n_data_cols + "}",
+        r"\hline",
+    ])
+
+    # first header level: model variation
+    row = [""]
+    rules = []
+    for i, model in enumerate(models):
+        text = model_labels.get(model, model.replace("_", r"\_"))
+        row.append(rf"\multicolumn{{{len(VARIANTS)}}}{{c}}{{{text}}}")
+        start = 2 + i * len(VARIANTS)
+        # rules.append(rf"\cmidrule(lr){{{start}-{start + len(VARIANTS) - 1}}}")
+    lines.append(" & ".join(row) + r" \\")
+    lines.append(" ".join(rules))
+
+    # second header level: optimistic vs. pessimistic
+    row = ["DCO"] + [VARIANT_LABELS[variant] for _ in models for variant in VARIANTS]
+    lines.append(" & ".join(row) + r" \\")
+    lines.append(r"\midrule")
+
+    for dco in dco_types:
+        row = [dco]
+        for model in models:
+            for variant in VARIANTS:
+                # fall back to NaN for any model or column that hasn't been run yet
+                try:
+                    value = n_targets.loc[model][f"{dco}{variant}"]
+                except KeyError:
+                    value = np.nan
+                if value is None or not np.isfinite(value):
+                    formatted_val = missing
+                else:
+                    mantissa, exponent = f"{value:.{sig - 1}e}".split("e")
+                    formatted_val = rf"${mantissa} \times 10^{{{int(exponent)}}}$"
+                row.append(formatted_val)
+        lines.append(" & ".join(row) + r" \\")
+
+    lines += [r"\hline", r"\end{tabular}"]
+    if not just_tabular:
+        lines.append(rf"\end{{{env}}}")
+    return "\n".join(lines)
