@@ -29,11 +29,11 @@ def get_pop_and_f_detect(folder, dco_type):
         is_big_file = int(pop_file.split("_")[-1].split(".")[0]) < 10
         if is_big_file:
             if big_file_total_so_far > 1e6:
-                print(f"Skipping {pop_file} and {f_det_file} because big_file_total_so_far is {big_file_total_so_far}")
+                print(f"  Skipping {pop_file} and {f_det_file} because big_file_total_so_far is {big_file_total_so_far}")
                 continue
         pops.append(cogsworth.pop.load(os.path.join(folder, pop_file), parts=["initial_binaries", "initial_galaxy", "stellar_evolution", "galactic_orbits"]))
         f_detects.append(pd.read_hdf(os.path.join(folder, f_det_file)))
-        print(f"Loaded {pop_file} and {f_det_file}, {len(pops[-1])} binaries")
+        print(f"  Loaded {pop_file} and {f_det_file}, {len(pops[-1])} binaries")
         if is_big_file:
             big_file_total_so_far += len(pops[-1])
 
@@ -60,27 +60,33 @@ def get_pop_and_f_detect(folder, dco_type):
 def main():
     parser = argparse.ArgumentParser(description="Concatenate detectable populations and f_detect arrays.")
     parser.add_argument("-f", "--folder", type=str, required=True, help="Folder containing the detectable populations and f_detect arrays.")
-    parser.add_argument("-d", "--dco_type", type=str, required=True, help="Type of DCO (e.g., NSWD, NSNS, BHWD, BHNS, BHBH).")
+    parser.add_argument("-d", "--dco_type", type=str, nargs="+", required=True, help="Type of DCO (e.g., NSWD, NSNS, BHWD, BHNS, BHBH).")
     parser.add_argument("-o", "--output-path", type=str, required=True, help="Output path for the concatenated population and f_detect array.")
     parser.add_argument("-O", "--overwrite", action="store_true", help="Overwrite existing files if they exist.")
 
     args = parser.parse_args()
 
-    output_pop_path = os.path.join(args.output_path, f"{args.dco_type}_in_band.h5")
-    output_f_detect_path = os.path.join(args.output_path, f"{args.dco_type}_f_detect.h5")
-    if os.path.exists(output_pop_path) and not args.overwrite:
-        raise FileExistsError(f"{output_pop_path} already exists. Use --overwrite to overwrite.")
-    if os.path.exists(output_f_detect_path) and not args.overwrite:
-        raise FileExistsError(f"{output_f_detect_path} already exists. Use --overwrite to overwrite.")
+    print(f"Concatenating detectable populations and f_detect arrays for DCO types: {args.dco_type}")
 
-    start = time()
+    for dco_type in args.dco_type:
+        print(f"Processing {dco_type}...")
+        output_pop_path = os.path.join(args.output_path, f"{dco_type}_in_band.h5")
+        output_f_detect_path = os.path.join(args.output_path, f"{dco_type}_f_detect.h5")
+        if os.path.exists(output_pop_path) and not args.overwrite:
+            raise FileExistsError(f"{output_pop_path} already exists. Use --overwrite to overwrite.")
+        if os.path.exists(output_f_detect_path) and not args.overwrite:
+            raise FileExistsError(f"{output_f_detect_path} already exists. Use --overwrite to overwrite.")
 
-    pop, f_detect = get_pop_and_f_detect(args.folder, args.dco_type)
+        start = time()
 
-    print(f"Concatenation took {time() - start:.2f} seconds.")
+        pop, f_detect = get_pop_and_f_detect(args.folder, dco_type)
 
-    pop.save(output_pop_path, overwrite=True)
-    f_detect.to_hdf(output_f_detect_path, key="f_detect", mode="w")
+        print(f"  Concatenation took {time() - start:.2f} seconds.")
+        start = time()
+
+        pop.save(output_pop_path, overwrite=True)
+        f_detect.to_hdf(output_f_detect_path, key="f_detect", mode="w")
+        print(f"  Saving took {time() - start:.2f} seconds.")
 
 
 if __name__ == "__main__":

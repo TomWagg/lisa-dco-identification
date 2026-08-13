@@ -19,7 +19,7 @@ module load disBatch
 disBatch -c 2 -p /mnt/home/twagg/projects/frank-lisa/slurm/detectable_runs/logs/ Tasks_TASKID
 """
 
-TASK_TEMPLATE = r"""#DISBATCH PREFIX source /mnt/home/twagg/.bashrc ; conda activate cogsworth ; export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 ; python -u /mnt/home/twagg/projects/frank-lisa/src/sample_detectable_population.py --folder /mnt/ceph/users/twagg/lisa-dcos/VARIATION --dco_type DCOTYPE --n_per_instance 500000 --n_instances 10 --output_folder /mnt/ceph/users/twagg/lisa-dcos/VARIATION -s ${DISBATCH_REPEAT_INDEX} PESSFLAG RETAIN_INTRINSIC_FLAG
+TASK_TEMPLATE = r"""#DISBATCH PREFIX source /mnt/home/twagg/.bashrc ; conda activate cogsworth ; export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 ; python -u /mnt/home/twagg/projects/frank-lisa/src/sample_detectable_population.py --folder /mnt/ceph/users/twagg/lisa-dcos/VARIATION --dco_type DCOTYPE --n_per_instance 500000 --n_instances 10 --output_folder /mnt/ceph/users/twagg/lisa-dcos/VARIATION/detection_files -s ${DISBATCH_REPEAT_INDEX} PESSFLAG RETAIN_INTRINSIC_FLAG
 #DISBATCH SUFFIX &> /mnt/home/twagg/projects/frank-lisa/slurm/detectable_runs/logs/DCOTYPE_PESSLABEL_VARIATION_s${DISBATCH_REPEAT_INDEX}.log
 #DISBATCH REPEAT 32 start OFFSET"""
 

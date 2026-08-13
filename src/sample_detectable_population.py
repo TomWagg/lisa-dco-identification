@@ -182,6 +182,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     instruments = ["LISA", "DECIGO"]
     positions = [("initial_pos", initial_distance),
                  ("final_pos", p_masked.get_final_mw_skycoord().icrs.distance)]
+    mission_length = [("10yr", 10 * u.yr), ("4yr", 4 * u.yr)]
 
     detectable_any_method = np.zeros(len(p_masked), dtype=bool)
     f_detects = {}
@@ -189,12 +190,14 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     for instrument in instruments:
         for pos_name, pos in positions:
-            sources_insp_masked.sc_params["instrument"] = instrument
-            sources_insp_masked.dist = pos
-            snr = sources_insp_masked.get_snr()
-            p_masked.bpp[f"snr_{instrument.lower()}_10yr_{pos_name}"] = snr
-            detectable_any_method |= (snr > 7)
-            f_detects[f"{instrument.lower()}_10yr_{pos_name}"] = np.sum(p_masked.bpp[snr > 7]["weights"]) / weights_all
+            for dur_name, dur in mission_length:
+                sources_insp_masked.sc_params["instrument"] = instrument
+                sources_insp_masked.sc_params["t_obs"] = dur
+                sources_insp_masked.dist = pos
+                snr = sources_insp_masked.get_snr()
+                p_masked.bpp[f"snr_{instrument.lower()}_{dur_name}_{pos_name}"] = snr
+                detectable_any_method |= (snr > 7)
+                f_detects[f"{instrument.lower()}_{dur_name}_{pos_name}"] = np.sum(p_masked.bpp[snr > 7]["weights"]) / weights_all
 
     print(f"  [{time.time() - lap:03.1f}s] After final pass, {np.sum(detectable_any_method)} systems are detectable by LISA or DECIGO at 10 pc, either at their initial or final positions")
     lap = time.time()
