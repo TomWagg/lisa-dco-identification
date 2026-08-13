@@ -357,7 +357,7 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
     def default_label(model, variant):
         pretty = model.replace("_", " ").capitalize()
         if model == "fiducial":
-            return "Fiducial" if variant == "" else "Pessimistic"
+            return "Optimistic" if variant == "" else "Pessimistic"
         return pretty if variant == "" else f"{pretty}\n(pess.)"
 
     labels = [column_labels.get((model, variant), default_label(model, variant))
@@ -372,6 +372,8 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
     # spread the DCO types evenly within each column, then split initial/final about that
     n_dco = len(dco_types)
     shifts = np.linspace(-width / 2, width / 2, n_dco) if n_dco > 1 else np.zeros(1)
+
+    ticks = [1, 2, 5, 10, 20, 50, 100]
 
     for axis, detector in zip(axes, detectors):
         for d_ind, dco in enumerate(dco_types):
@@ -402,24 +404,24 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                               markeredgecolor=colours[dco], markeredgewidth=1.5, elinewidth=1.5,
                               capsize=3, linestyle="none", zorder=3)
 
-
-        if show_sec_ax:
-            # a constant rescaling, so the inverse is just the reciprocal
-            sec_ax = axis.secondary_yaxis(
-                "right",
-                functions=(lambda y, f=np.sqrt(10/4): y * f,
-                        lambda y, f=np.sqrt(10/4): y / f))
-            sec_ax.set_ylabel(f"Approximate number of\ndetections (10 yr)")
-
         # faint dividers between each pair of columns
         for c_ind in range(1, len(columns)):
-            axis.axvline(c_ind - 0.5, color="grey", linestyle="dotted", linewidth=2, zorder=0)
+            axis.axvline(c_ind - 0.5, color="k", linestyle="-", linewidth=1, zorder=0)
 
         axis.set_xticks(range(len(columns)))
         axis.set_xlim(-0.5, len(columns) - 0.5)
         axis.set_ylabel(f"Number of {DETECTOR_LABELS[detector]}\ndetections ({duration} yr)")
         if log:
             axis.set_yscale("log")
+
+        # faint horizontal lines at 1, 10, 100
+        for line in ticks:
+            if np.log10(line) % 1 == 0:
+                axis.axhline(line, color="grey", linestyle="dotted", linewidth=1, zorder=0)
+
+        if log:
+            axis.set_yticks(ticks)
+            axis.get_yaxis().set_major_formatter(plt.ScalarFormatter())
 
     # only the bottom panel needs tick labels
     axes[-1].set_xticklabels(labels)
@@ -432,11 +434,25 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                           markeredgecolor="grey", markeredgewidth=1.5)
                    for pos in POSITIONS]
 
-    pos_legend = axes[0].legend(handles=pos_handles, loc="lower left", title="Location")
+    pos_legend = axes[0].legend(handles=pos_handles, loc="lower left", title="Location", framealpha=1.0)
     axes[0].add_artist(pos_legend)
 
     axes[0].legend(handles=dco_handles, loc="lower center", ncols=len(dco_types),
                    handletextpad=0.0, columnspacing=0.5, bbox_to_anchor=(0.5, 1.02))
+
+
+    if show_sec_ax:
+        # a constant rescaling, so the inverse is just the reciprocal
+
+        for ax in axes:
+            sec_ax = ax.secondary_yaxis(
+                "right",
+                functions=(lambda y, f=np.sqrt(10/duration): y * f,
+                        lambda y, f=np.sqrt(10/duration): y / f))
+            sec_ax.set_ylabel(f"Approximate number of\ndetections (10 yr)")
+
+            sec_ax.set_yticks(ticks)
+            sec_ax.set_yticklabels(ticks)
 
     if save is not None:
         plt.savefig(save)
