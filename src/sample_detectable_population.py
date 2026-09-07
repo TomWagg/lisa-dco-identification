@@ -13,6 +13,8 @@ import const
 
 import gala.potential as gp
 import cogsworth
+from cosmic.evolve import Evolve
+from cosmic.output import load_initC
 
 
 # CONSTANTS STUFF
@@ -30,13 +32,15 @@ else:
 
 
 
-def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance=500_000, oversample_factor=8,
+def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=None,
+                              n_per_instance=500_000, oversample_factor=8,
                               retain_intrinsic=False):
     lap = time.time()
 
     # draw a random sample, weighted by the Milky Way metallicity distribution
     rand_sample = all_formation_rows.sample(n_per_instance, weights="MW_Z_weight", replace=True)
     rand_kicks = all_kick_infos.loc[rand_sample.index]
+    rand_initC = all_initCs.loc[rand_sample.index] if all_initCs is not None else None
 
     print(f"  [{time.time() - lap:03.1f}s] Sampled {n_per_instance} systems from the formation rows")
     lap = time.time()
@@ -106,6 +110,10 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     rand_kicks.index = np.arange(len(rand_kicks)) // 2
     rand_kicks["bin_num"] = rand_kicks.index.values
 
+    if rand_initC is not None:
+        rand_initC.index = np.arange(len(rand_initC))
+        rand_initC["bin_num"] = rand_initC.index.values
+
     # these are all zero by definition, but we need to set them explicitly to avoid errors in cogsworth
     rand_kicks[['disrupted', 'delta_vsysx_2', 'delta_vsysy_2', 'delta_vsysz_2']] = 0.0
 
@@ -119,36 +127,87 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
     bpp["evol_type"] = 15
     p._bpp = bpp
 
-    print(f"  [{time.time() - lap:03.1f}s] Finished setting up the population with {len(p)} systems. Starting LEGWORK evolution...")
+    print(f"  [{time.time() - lap:03.1f}s] Finished setting up the population with {len(p)} systems.")
     lap = time.time()
 
-    # first pass: mask out systems that have merged or not yet formed DCOs
-    sources = p.to_legwork_sources(distances=np.full(len(p), 10.0) * u.pc)
+    # step 1: mask out systems not yet formed DCOs
+    # --------------------------------------------
+    has_formed_dco = p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr
+    p_dco = p[has_formed_dco]
+
+    # step 2: separate the RLOF systems from the pure GWs
+    # ---------------------------------------------------
+
+    # skip this if there's no RLOF time column, i.e. if the DCO type is not NSWD or BHWD
+    if "rlof_time" in p_dco.bpp.columns:
+        undergoing_rlof = p_dco.initial_galaxy.tau >= p_dco.bpp["rlof_time"].values * u.Myr
+        recent_rlof = (
+            undergoing_rlof
+            & (p_dco.initial_galaxy.tau < p_dco.bpp["rlof_time"].values * u.Myr + 1 * u.Gyr)
+        )
+
+        # we only care about the recent RLOF systems, others have widened so much their SNR will be negligible
+        p_rlof = p_dco[recent_rlof] if np.sum(recent_rlof) > 0 else None
+        p_gw = p_dco[~undergoing_rlof]
+    else:
+        p_rlof = None
+        p_gw = p_dco
+
+    print(f"  [{time.time() - lap:03.1f}s] Found that {len(p_rlof) if p_rlof is not None else 0} systems are undergoing RLOF and {len(p_gw)} systems are pure GWs.")
+    lap = time.time()
+
+    # step 3: re-evolve RLOF systems with COSMIC to get their current orbital parameters
+    # ----------------------------------------------------------------------------------
+    if p_rlof is not None:
+        if rand_initC is None:
+            raise ValueError("RLOF systems require initC data to re-evolve with COSMIC, but no initC data was provided.")
+        ibt = rand_initC.loc[p_rlof.bpp["bin_num"]].copy()
+        ibt["tphysf"] = p_rlof.initial_galaxy.tau.to(u.Myr).value
+        re_ev_bpp, _, _, _ = Evolve.evolve(ibt, nproc=2)
+
+        # keep only the last row of the bpp (present state)
+        re_ev_bpp = re_ev_bpp.drop_duplicates(subset="bin_num", keep="last")
+
+        # copy over the cols COSMIC didn't produce
+        extra_cols = ["weights", "remove_if_pessimistic", "rlof_time", "rlof_sep", "bin_num"]
+        for col in extra_cols:
+            re_ev_bpp[col] = p_rlof.bpp[col].values
+        p_rlof._bpp = re_ev_bpp[p_rlof.bpp.columns]
+
+        p_rlof = p_rlof[p_rlof.final_bpp["sep"] > 0]
+
+    print(f"  [{time.time() - lap:03.1f}s] Evolved the {len(p_rlof) if p_rlof is not None else 0} RLOF systems to their current orbital parameters with COSMIC.")
+    lap = time.time()
+
+
+    # step 4: mask out the systems that are not inspiraling at present day
+    # --------------------------------------------------------------------
+    sources = p_gw.to_legwork_sources(distances=np.full(len(p_gw), 10.0) * u.pc)
     sources.n_proc = 2
+
+    # first calculate the merger time approximately and jettison anything that merged over 100 Myr ago
     sources.get_merger_time(exact=False)
     is_inspiraling_approx = (
-        (p.initial_galaxy.tau >= p.bpp["tphys"].values * u.Myr) &        # has formed a BHBH
-        (p.initial_galaxy.tau <= sources.t_merge
-                                 + p.bpp["tphys"].values * u.Myr
-                                 + 100 * u.Myr)                          # but won't merge for at least 100 Myr
+        p_gw.initial_galaxy.tau <= sources.t_merge
+                                    + p_gw.bpp["tphys"].values * u.Myr
+                                    + 100 * u.Myr
     )
     sources_maybe_insp = sources[is_inspiraling_approx]
-    p_maybe_insp = p[is_inspiraling_approx]
+    p_maybe_insp = p_gw[is_inspiraling_approx]
 
-
+    # redo it with the real merger time
     sources_maybe_insp.get_merger_time(exact=True)
     is_inspiraling = (
-        (p_maybe_insp.initial_galaxy.tau >= p_maybe_insp.bpp["tphys"].values * u.Myr) &  # has formed a BHBH
-        (p_maybe_insp.initial_galaxy.tau <= sources_maybe_insp.t_merge
-                                            + p_maybe_insp.bpp["tphys"].values * u.Myr)  # but hasn't merged yet
+        p_maybe_insp.initial_galaxy.tau <= sources_maybe_insp.t_merge
+                                            + p_maybe_insp.bpp["tphys"].values * u.Myr
     )
     p_insp = p_maybe_insp[is_inspiraling]
     sources_insp = sources_maybe_insp[is_inspiraling]
 
-    print(f"  [{time.time() - lap:03.1f}s] After first pass, {len(p_insp)} systems are inspiraling at present day")
+    print(f"  [{time.time() - lap:03.1f}s] After first pass of GW systems, {len(p_insp)} systems are inspiraling at present day")
     lap = time.time()
 
-    # second pass: mask out systems that have frequencies below 1e-6 Hz at present day
+    # step 5: mask out systems that have frequencies below 1e-6 Hz at present day
     # if not retaining the intrinsic population, hone down to just the systems that
     # are loud enough to be detectable by LISA at 10 pc
     sources_insp.evolve_sources(t_evol=p_insp.initial_galaxy.tau - p_insp.bpp["tphys"].values * u.Myr)
@@ -159,19 +218,59 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
         sources_insp.get_snr()
         mask &= (sources_insp.snr > 7)
 
-    p_masked = p_insp[mask]
+    p_masked_no_rlof = p_insp[mask]
+    sources_insp_masked = sources_insp[mask]
+    _add_dummy_stats(p_masked_no_rlof)
 
     last_words = "have frequencies above 1e-6 Hz" if retain_intrinsic else "are loud enough to be detectable by LISA at 10 pc"
-    print(f"  [{time.time() - lap:03.1f}s] After second pass, {len(p_masked)} systems {last_words}")
+    print(f"  [{time.time() - lap:03.1f}s] After second pass, {len(p_masked_no_rlof)} systems {last_words}")
     lap = time.time()
+
+    if p_rlof is not None:
+        _add_dummy_stats(p_rlof)
+
+        p_masked = cogsworth.pop.concat(p_masked_no_rlof, p_rlof)
+        p_masked._final_bpp = None
+        p_masked._disrupted = None
+    else:
+        p_masked = p_masked_no_rlof
+    print(f"  [{time.time() - lap:03.1f}s] Combined the {len(p_masked_no_rlof)} GW systems and {len(p_rlof) if p_rlof is not None else 0} RLOF systems to get {len(p_masked)} total systems.")
+    lap = time.time()
+
+    # print(len(p_masked), "len p_masked before orbits")
 
     # final pass: evolve the loud systems through the Milky Way and calculate their SNRs at true distances
     p_masked.perform_galactic_evolution(progress_bar=False)
     print(f"  [{time.time() - lap:03.1f}s] Finished integrating the Galactic orbits of those systems through the Milky Way")
     lap = time.time()
 
-    sources_insp_masked = sources_insp[np.isin(p_insp.bin_nums, p_masked.bin_nums)]
+    # print(len(p_masked), "len p_masked after orbits")
+
+    sources_insp_masked = sources_insp[np.isin(p_insp.bin_nums, p_masked.bin_nums[p_masked.bin_nums <= max(p_masked_no_rlof.bin_nums)])]
     sources_insp_masked.sc_params["t_obs"] = 10 * u.yr
+
+    # print(len(sources_insp_masked), "len sources_insp_masked before concat")
+
+    # if there are RLOF systems, add them to the sources_insp_masked so we can calculate their SNRs too
+    if p_rlof is not None:
+        # mask the p_rlof to those that made it through orbit integration
+        # print(len(p_rlof))
+        p_rlof = p_rlof[np.isin(p_rlof.bin_nums, p_masked.bin_nums - (max(p_masked_no_rlof.bin_nums) + 1))]
+        # print(len(p_rlof))
+        sources_rlof = p_rlof.to_legwork_sources(distances=np.full(len(p_rlof), 10.0) * u.pc)
+        # print(len(sources_rlof), (p_rlof.final_bpp["sep"] <= 0).sum())
+
+        # append these sources to the main class
+        for attr in ["m_1", "m_2", "dist", "ecc", "f_orb", "merged"]:
+            # print(attr, len(getattr(sources_insp_masked, attr)), len(getattr(sources_rlof, attr)))
+            setattr(sources_insp_masked, attr, np.concatenate([getattr(sources_insp_masked, attr),
+                                                                getattr(sources_rlof, attr)]))
+            # print(attr, len(getattr(sources_insp_masked, attr)))
+        sources_insp_masked.t_merge = None
+        sources_insp_masked.snr = None
+        sources_insp_masked.max_snr_harmonic = None
+
+        # print(len(sources_insp_masked), "len sources_insp_masked after concat")
 
     initial_distance = SkyCoord(
         x=p_masked.initial_galaxy.x, y=p_masked.initial_galaxy.y, z=p_masked.initial_galaxy.z,
@@ -190,6 +289,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     for instrument in instruments:
         for pos_name, pos in positions:
+            # print(pos_name, len(pos), len(p_masked), len(sources_insp_masked))
             for dur_name, dur in mission_length:
                 sources_insp_masked.sc_params["instrument"] = instrument
                 sources_insp_masked.sc_params["t_obs"] = dur
@@ -212,12 +312,17 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, n_per_instance
 
     # et voila, a detectable fraction for this Milky Way instance
     if p_masked is not None:
-        p_masked._mass_binaries = 0.0
-        p_masked._mass_singles = 0.0
-        p_masked._n_singles_req = 0
-        p_masked._n_bin_req = 0
+        _add_dummy_stats(p_masked)
 
     return f_detects, p_masked
+
+
+def _add_dummy_stats(p):
+    p._mass_binaries = 0.0
+    p._mass_singles = 0.0
+    p._n_singles_req = 0
+    p._n_bin_req = 0
+    return p
 
 
 def main():
@@ -237,6 +342,10 @@ def main():
 
     all_formation_rows = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_formation_rows.h5"), key="formation_rows")
     all_kick_infos = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_kick_info.h5"), key="kick_info")
+    if os.path.isfile(os.path.join(args.folder, f"{args.dco_type}_initC.h5")):
+        all_initCs = load_initC(os.path.join(args.folder, f"{args.dco_type}_initC.h5"))
+    else:
+        all_initCs = None
 
     if args.pessimistic:
         print("Using pessimistic CE assumption: removing systems that would have been removed under this assumption.")
@@ -254,7 +363,7 @@ def main():
         if args.retain_intrinsic:
             print("Retaining the intrinsic population of DCOs.")
         f_detect, p_mw = evolve_milky_way_instance(
-            all_formation_rows, all_kick_infos, n_per_instance=args.n_per_instance,
+            all_formation_rows, all_kick_infos, all_initCs, n_per_instance=args.n_per_instance,
             oversample_factor=10 if args.dco_type == "NSWD" else 8,
             retain_intrinsic=args.retain_intrinsic
         )
@@ -290,4 +399,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python sample_detectable_population.py -f /mnt/ceph/users/twagg/lisa-dcos/fiducial/ -d BHBH -N 500000 -n 1 -o /mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files -s test
+# python sample_detectable_population.py -f /mnt/ceph/users/twagg/lisa-dcos/fiducial/ -d NSWD -N 500000 -n 1 -o /mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files -s test
