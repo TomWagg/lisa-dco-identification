@@ -35,6 +35,8 @@ def get_ecc_uncertainty_stats(sources, harmonic_threshold=1):
 
             # get the top two harmonics and sum them to get uncertainty
             top_snrs = np.sort(snr_n_2**(0.5), axis=1)[:, -2:]
+            # replace any zeros with 1e-10 to avoid division by zero
+            top_snrs[top_snrs == 0] = 1e-10
             snr_uncertainty[match] = 1 / top_snrs[:, 0] + 1 / top_snrs[:, -1]
             snr_ratio[match] = top_snrs[:, 0] / top_snrs[:, 1]
 

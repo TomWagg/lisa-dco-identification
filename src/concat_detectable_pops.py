@@ -93,4 +93,4 @@ if __name__ == "__main__":
     main()
 
 
-# python concat_detectable_pops.py -f "/mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files" -d "BHBH" -o "/mnt/ceph/users/twagg/lisa-dcos/fiducial/" -O
+# python concat_detectable_pops.py -f "/mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files" -d "NSWD BHWD" -o "/mnt/ceph/users/twagg/lisa-dcos/fiducial/" -O

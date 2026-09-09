@@ -281,7 +281,7 @@ def bootstrapped_kde_fast(variable, weights, ax, seeds=None, bw_adjust=None, nor
     return ax
 
 
-def bootstrapped_ecdf(variable, weights, seeds, ax,
+def bootstrapped_ecdf(variable, weights, ax, seeds=None,
                       bootstraps=200, normalisation=None, x_count=10000,
                       log_scale=(False, False), color="tab:blue", label=None,
                       **kwargs):
@@ -315,6 +315,9 @@ def bootstrapped_ecdf(variable, weights, seeds, ax,
     ax : `matplotlib Axis`
         Axis on which ECDF is plotted
     """
+    if seeds is None:
+        seeds = np.arange(len(variable))
+
     # store the ECDF values for each bootstrap
     ecdf_vals = np.zeros((bootstraps, x_count))
 
