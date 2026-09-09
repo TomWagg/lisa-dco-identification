@@ -269,14 +269,18 @@ def bootstrapped_kde_fast(variable, weights, ax, seeds=None, bw_adjust=None, nor
     # calculate 1- and 2-sigma percentiles
     percentiles = np.percentile(kde_vals, [15.89, 84.1, 2.27, 97.725], axis=0)
 
-    ax.fill_between(x_vals, percentiles[2], percentiles[3], alpha=0.15, color=color, **kwargs)
-    ax.fill_between(x_vals, percentiles[0], percentiles[1], alpha=0.3, color=color, **kwargs)
-    ax.plot(x_vals, np.median(kde_vals, axis=0), color=color, label=label, **kwargs)
+    if not isinstance(ax, (list, tuple, np.ndarray)):
+        ax = [ax]
 
-    if log_scale[0]:
-        ax.set_xscale("log")
-    if log_scale[1]:
-        ax.set_yscale("log")
+    for a in ax:
+        a.fill_between(x_vals, percentiles[2], percentiles[3], alpha=0.15, color=color, **kwargs)
+        a.fill_between(x_vals, percentiles[0], percentiles[1], alpha=0.3, color=color, **kwargs)
+        a.plot(x_vals, np.median(kde_vals, axis=0), color=color, label=label, **kwargs)
+
+        if log_scale[0]:
+            a.set_xscale("log")
+        if log_scale[1]:
+            a.set_yscale("log")
 
     return ax
 
