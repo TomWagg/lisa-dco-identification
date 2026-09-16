@@ -2,7 +2,7 @@ import os
 
 TEMPLATE = r"""#!/bin/bash
 ## Job Name
-#SBATCH --job-name=DCO_TYPE_lisa
+#SBATCH --job-name=DCO_TYPE_VARIATION_lisa
 #SBATCH --partition=cca,gen
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
@@ -14,7 +14,7 @@ TEMPLATE = r"""#!/bin/bash
 #SBATCH --export=all
 
 source /mnt/home/twagg/.bashrc
-conda activate cosmic
+conda activate cogsworth
 
 # create a log-spaced array between 1e-4 and 0.03 with 50 bins
 METS=($(python -c "import numpy as np; print(' '.join(map(str, np.logspace(-4, np.log10(0.03), 50).round(5))))"))
