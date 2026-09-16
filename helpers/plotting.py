@@ -2,6 +2,8 @@ import numpy as np
 from scipy.stats import gaussian_kde
 from scipy.interpolate import interp1d
 import matplotlib.ticker as mticker
+import astropy.units as u
+import matplotlib.pyplot as plt
 
 
 class LogDecadeMinorLocator(mticker.Locator):
@@ -196,7 +198,7 @@ def bootstrapped_kde(variable, weights, ax, seeds=None, bw_adjust=None, normalis
 def bootstrapped_kde_fast(variable, weights, ax, seeds=None, bw_adjust=None, normalisation=1,
                      lower_bound=None, upper_bound=None,
                      bootstraps=200, x_min=None, x_max=None, x_count=200, log_scale=(False, False),
-                     color="tab:blue", label=None, rng=None, **kwargs):
+                     color="tab:blue", label=None, rng=None, fill_uncertainties=True, **kwargs):
     """Create a bootstrapped weighted KDE plot.
 
     Bootstrapping is performed by reweighting a single precomputed kernel matrix rather than
@@ -273,8 +275,9 @@ def bootstrapped_kde_fast(variable, weights, ax, seeds=None, bw_adjust=None, nor
         ax = [ax]
 
     for a in ax:
-        a.fill_between(x_vals, percentiles[2], percentiles[3], alpha=0.15, color=color, **kwargs)
-        a.fill_between(x_vals, percentiles[0], percentiles[1], alpha=0.3, color=color, **kwargs)
+        if fill_uncertainties:
+            a.fill_between(x_vals, percentiles[2], percentiles[3], alpha=0.15, color=color, **kwargs)
+            a.fill_between(x_vals, percentiles[0], percentiles[1], alpha=0.3, color=color, **kwargs)
         a.plot(x_vals, np.median(kde_vals, axis=0), color=color, label=label, **kwargs)
 
         if log_scale[0]:
@@ -389,3 +392,34 @@ def bootstrapped_ecdf(variable, weights, ax, seeds=None,
 def nice_transparent_hist(ax, data, bins, label, colour, density, lw=2, alpha=0.4, cumulative=False, **kwargs):
     ax.hist(data, bins=bins, color=colour, lw=lw, histtype='step', density=density, label=label, cumulative=cumulative, **kwargs)
     ax.hist(data, bins=bins, color=colour, alpha=alpha, density=density, cumulative=cumulative, **kwargs)
+
+
+def estimate_scale_height_cdf(z, weights=None, R=None, Rlims=(7.5, 8.5), verbose=False):
+    """Estimate the scale height of a distribution given z-positions using the cumulative distribution function (CDF).
+    This method does not assume a model, but instead just finds the z-value at which the CDF reaches 1 - 1/e ~ 0.63, which corresponds to the scale height for an exponential distribution."""
+    z = np.abs(z)
+    if R is not None:
+        R = R.to(u.kpc).value if hasattr(R, 'unit') else R
+        mask = (R >= Rlims[0]) & (R < Rlims[1])
+        if verbose:
+            print(len(z), "objects before Rlims")
+        z = z[mask]
+        if verbose:
+            print(len(z), "objects in Rlims")
+
+    if hasattr(z, 'unit'):
+        z = z.to(u.kpc).value
+
+    if weights is None:
+        weights = np.ones_like(z)
+
+    # calculate empirical CDF without any binning
+    order = np.argsort(z)
+    sorted_z = z[order]
+    # cdf = np.arange(1, len(sorted_z) + 1) / len(sorted_z)
+    cdf = np.cumsum(weights[order])
+    cdf /= cdf[-1]
+
+    scale_height = sorted_z[cdf >= (1 - 1 / np.e)][0]
+
+    return scale_height
