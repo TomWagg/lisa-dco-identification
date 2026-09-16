@@ -63,8 +63,5 @@ def get_m_c_uncertainty(f_orb, f_orb_dot, ecc, ecc_uncertainty, snr, t_obs):
         + 3 / 5 * f_orb_dot_uncertainty \
         + 3 / 5 * get_Fprime_over_F(ecc) * ecc_uncertainty
 
-def get_m_c_uncertainty_alt(f_orb, f_orb_dot, ecc, ecc_uncertainty, snr, t_obs):
-    f_orb_uncertainty = get_f_orb_uncertainty(snr, t_obs, f_orb)
-    f_orb_dot_uncertainty = get_f_orb_dot_uncertainty(snr, t_obs, f_orb_dot)
-
-    return np.sqrt((11 / 5 * f_orb_uncertainty)**2 + (3 / 5 * f_orb_dot_uncertainty)**2 + (3 / 5 * get_Fprime_over_F(ecc) * ecc_uncertainty)**2)
+def get_D_uncertainty(snr, f_dom, m_c, t_obs):
+    return 0.2 * (snr / 10)**-1 * np.maximum(1, (f_dom / (1.4e-3 * u.Hz))**(-11/3) * (m_c / u.Msun)**(-5/3) * (t_obs / (10 * u.yr))**(-2))
