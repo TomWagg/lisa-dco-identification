@@ -27,7 +27,7 @@ echo "Starting DCO_TYPE simulation with metallicity: $MET"
 # run the distributed underworld simulation
 python /mnt/home/twagg/projects/frank-lisa/src/create_dco_population.py \
     --metallicity $MET \
-    --inifile /mnt/home/twagg/projects/frank-lisa/settings/params_VARIATION.ini \
+    --inifile /mnt/home/twagg/projects/frank-lisa/settings/VARIATION.ini \
     --total_systems 2000000 \
     --batch_size 25000 \
     --dco_type DCO_TYPE \
@@ -36,7 +36,7 @@ python /mnt/home/twagg/projects/frank-lisa/src/create_dco_population.py \
 """
 
 os.makedirs("jobs", exist_ok=True)
-for variation in ["fiducial"]:
+for variation in ["fiducial", "alpha_low", "alpha_high", "no_ecsn", "maltsev", "qcflag2"]:
     os.makedirs(os.path.join("jobs", variation), exist_ok=True)
     for dco_type in ["NSWD", "NSNS", "BHWD", "BHNS", "BHBH"]:
         with open(os.path.join("jobs", variation, f"create_{dco_type}s.slurm"), "w") as f:

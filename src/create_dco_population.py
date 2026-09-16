@@ -8,6 +8,8 @@ import sys
 sys.path.append("/mnt/home/twagg/projects/frank-lisa/helpers")
 import const
 
+import os
+
 
 IS_INTERESTING = {
     "NSWD": merging_dco(kstar_1=[13], kstar_2=[10, 11, 12]),
@@ -20,6 +22,9 @@ IS_INTERESTING = {
 def create_dco_population(metallicity, inifile_path, total_systems, batch_size, dco_type, nproc, output_path):
 
     start = time()
+
+    # check that the folders containing the output path exist, and create them if they don't
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     def derive_params(sampled):
         """Provide binary parameters not drawn from the ParameterSpace."""
