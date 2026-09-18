@@ -6,10 +6,12 @@ import pandas as pd
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
+import h5py as h5
 
 import sys
 sys.path.append("/mnt/home/twagg/projects/frank-lisa/helpers/")
 import const
+from sfh import SB15_PhiCut
 
 import gala.potential as gp
 import cogsworth
@@ -32,15 +34,16 @@ else:
 
 
 
-def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=None,
-                              n_per_instance=500_000, oversample_factor=8,
-                              retain_intrinsic=False):
+def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, all_initC_at_DCOs=None,
+                              n_per_instance=500_000, oversample_factor=5,
+                              retain_intrinsic=False, variation="fiducial"):
     lap = time.time()
 
     # draw a random sample, weighted by the Milky Way metallicity distribution
     rand_sample = all_formation_rows.sample(n_per_instance, weights="MW_Z_weight", replace=True)
     rand_kicks = all_kick_infos.loc[rand_sample.index]
-    rand_initC = all_initCs.loc[rand_sample.index] if all_initCs is not None else None
+    rand_initC = all_initCs.loc[rand_sample.index]
+    rand_initC_at_DCO = all_initC_at_DCOs.loc[rand_sample.index] if all_initC_at_DCOs is not None else None
 
     print(f"  [{time.time() - lap:03.1f}s] Sampled {n_per_instance} systems from the formation rows")
     lap = time.time()
@@ -57,6 +60,19 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
 
     # continue until we have enough systems in each metallicity bin
     while np.sum(counts) < np.sum(target_counts):
+        # find the maximum metallicity that doesn't have a full bin
+        max_Z = const.Z_BIN_CENTRES[counts < target_counts].max()
+    
+        # max Z is below 1e-3 then switch to the phi cut version
+        if max_Z <= 5e-4:
+            print(f"    Using phi cut of 3.0 for max_Z <= 5e-4, with max_Z = {max_Z}")
+            SB15 = SB15_PhiCut(phi_cut=3.0, potential=gp.MilkyWayPotential(version="v2"))
+        elif max_Z <= 1e-3:
+            print(f"    Using phi cut of 2.0 for max_Z <= 1e-3, with max_Z = {max_Z}")
+            SB15 = SB15_PhiCut(phi_cut=2.0, potential=gp.MilkyWayPotential(version="v2"))
+        else:
+            print(f"    Using phi cut of 0.0 for max_Z > 1e-3, with max_Z = {max_Z}")
+            SB15 = SB15_PhiCut(phi_cut=0.0, potential=gp.MilkyWayPotential(version="v2"))
         # sample from the SFH, clipping metallicities to the range of the COSMIC sim
         SB15.sample(int(sample_size))
         SB15.Z[SB15.Z < 1e-4] = 1e-4
@@ -88,7 +104,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
         len(rand_sample),
         # unused but required for cogsworth
         sfh_model=cogsworth.sfh.SandersBinney2015(potential=gp.MilkyWayPotential(version='v2')),
-        ini_file="/mnt/home/twagg/projects/frank-lisa/settings/params.ini",
+        ini_file=f"/mnt/home/twagg/projects/frank-lisa/settings/{variation}.ini",
         # evolve through MW, only tracking end point, just 2 processes
         galactic_potential=gp.MilkyWayPotential(version='v2'),
         processes=2, store_entire_orbits=False,
@@ -109,16 +125,22 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
     rand_sample["bin_num"] = rand_sample.index.values
     rand_kicks.index = np.arange(len(rand_kicks)) // 2
     rand_kicks["bin_num"] = rand_kicks.index.values
+    rand_initC.index = np.arange(len(rand_initC))
+    rand_initC["bin_num"] = rand_initC.index.values
 
-    if rand_initC is not None:
-        rand_initC.index = np.arange(len(rand_initC))
-        rand_initC["bin_num"] = rand_initC.index.values
+    if rand_initC_at_DCO is not None:
+        rand_initC_at_DCO.index = np.arange(len(rand_initC_at_DCO))
+        rand_initC_at_DCO["bin_num"] = rand_initC_at_DCO.index.values
 
     # these are all zero by definition, but we need to set them explicitly to avoid errors in cogsworth
     rand_kicks[['disrupted', 'delta_vsysx_2', 'delta_vsysy_2', 'delta_vsysz_2']] = 0.0
 
     # save both to the population
-    p._initial_binaries = rand_sample
+    p._initial_binaries = rand_initC
+    p._initial_binaries["MW_Z_weight"] = rand_sample["MW_Z_weight"].values
+    p._initial_binaries["metallicity"] = rand_sample["metallicity"].values
+    p._initial_binaries = p._initial_binaries.copy()
+
     p._kick_info = rand_kicks
 
     # bpp shouldn't have weights or metallicity and needs evol_type, let's just pick 15
@@ -159,9 +181,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
     # step 3: re-evolve RLOF systems with COSMIC to get their current orbital parameters
     # ----------------------------------------------------------------------------------
     if p_rlof is not None:
-        if rand_initC is None:
-            raise ValueError("RLOF systems require initC data to re-evolve with COSMIC, but no initC data was provided.")
-        ibt = rand_initC.loc[p_rlof.bpp["bin_num"]].copy()
+        if rand_initC_at_DCO is None:
+            raise ValueError("RLOF systems require initC_at_DCO data to re-evolve with COSMIC, but no initC data was provided.")
+        ibt = rand_initC_at_DCO.loc[p_rlof.bpp["bin_num"]].copy()
         ibt["tphysf"] = p_rlof.initial_galaxy.tau.to(u.Myr).value
         re_ev_bpp, _, _, _ = Evolve.evolve(ibt, nproc=2)
 
@@ -281,7 +303,8 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
     instruments = ["LISA", "DECIGO"]
     positions = [("initial_pos", initial_distance),
                  ("final_pos", p_masked.get_final_mw_skycoord().icrs.distance)]
-    mission_length = [("10yr", 10 * u.yr), ("4yr", 4 * u.yr)]
+    mission_length = [("8yr", 8 * u.yr), ("4yr", 4 * u.yr)]
+    snr_lims = [("7", 7), ("12", 12)]
 
     detectable_any_method = np.zeros(len(p_masked), dtype=bool)
     f_detects = {}
@@ -296,8 +319,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
                 sources_insp_masked.dist = pos
                 snr = sources_insp_masked.get_snr()
                 p_masked.bpp[f"snr_{instrument.lower()}_{dur_name}_{pos_name}"] = snr
-                detectable_any_method |= (snr > 7)
-                f_detects[f"{instrument.lower()}_{dur_name}_{pos_name}"] = np.sum(p_masked.bpp[snr > 7]["weights"]) / weights_all
+                for snr_lim_name, snr_lim in snr_lims:
+                    detectable_any_method |= (snr > snr_lim)
+                    f_detects[f"{instrument.lower()}_{dur_name}_{pos_name}_SNRgt{snr_lim_name}"] = np.sum(p_masked.bpp[snr > snr_lim]["weights"]) / weights_all
 
     print(f"  [{time.time() - lap:03.1f}s] After final pass, {np.sum(detectable_any_method)} systems are detectable by LISA or DECIGO at 10 pc, either at their initial or final positions")
     lap = time.time()
@@ -314,7 +338,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs=Non
     if p_masked is not None:
         _add_dummy_stats(p_masked)
 
-    return f_detects, p_masked
+    return f_detects, p_masked, weights_all
 
 
 def _add_dummy_stats(p):
@@ -327,25 +351,40 @@ def _add_dummy_stats(p):
 
 def main():
     parser = argparse.ArgumentParser(description="Evolve a Milky Way instance and calculate the number of DCOs several times.")
-    parser.add_argument("-f", "--folder", type=str, required=True, help="Path to the folder containing the formation rows and kick info.")
     parser.add_argument("-d", "--dco_type", type=str, required=True, choices=["NSWD", "NSNS", "BHWD", "BHNS", "BHBH"], help="Type of DCO to evolve.")
     parser.add_argument("-N", "--n_per_instance", type=int, default=500_000, help="Number of systems to sample per Milky Way instance.")
     parser.add_argument("-n", "--n_instances", type=int, default=10, help="Number of times to repeat the evolution.")
-    parser.add_argument("-o", "--output_folder", type=str, required=True, help="Path to the folder where the output files will be saved.")
     parser.add_argument("-s", "--suffix", type=str, default="", help="Suffix to add to the output files.")
     parser.add_argument("-p", "--pessimistic", action="store_true", help="Use the pessimistic CE assumption when calculating the detectable fraction.")
     parser.add_argument("-r", "--retain_intrinsic", action="store_true", help="Retain the intrinsic population of DCOs, rather than just the detectable ones.")
+    parser.add_argument("-v", "--variation", type=str, default="fiducial", help="Variation of the model to use (default: fiducial).")
 
     args = parser.parse_args()
 
-    full_start = time.time()
+    args.folder = os.path.join("/mnt/ceph/users/twagg/lisa-dcos", args.variation)
+    args.output_folder = os.path.join(args.folder, "detection_files")
 
-    all_formation_rows = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_formation_rows.h5"), key="formation_rows")
-    all_kick_infos = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_kick_info.h5"), key="kick_info")
-    if os.path.isfile(os.path.join(args.folder, f"{args.dco_type}_initC.h5")):
-        all_initCs = load_initC(os.path.join(args.folder, f"{args.dco_type}_initC.h5"))
-    else:
-        all_initCs = None
+    os.makedirs(args.output_folder, exist_ok=True)
+
+    full_start = time.time()
+    all_formation_rows = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_at_formation.h5"), key="formation_rows")
+    print(f"Loaded {len(all_formation_rows)} formation rows in {time.time() - full_start:.2f} seconds.")
+
+    lap = time.time()
+    all_kick_infos = pd.read_hdf(os.path.join(args.folder, f"{args.dco_type}_at_formation.h5"), key="kick_info")
+    print(f"Loaded {len(all_kick_infos)} kick infos in {time.time() - lap:.2f} seconds.")
+
+    lap = time.time()
+    all_initCs = load_initC(os.path.join(args.folder, f"{args.dco_type}_at_formation.h5"), key="initC", settings_key="initC_settings")
+    print(f"Loaded {len(all_initCs)} initC in {time.time() - lap:.2f} seconds.")
+
+    lap = time.time()
+    with h5.File(os.path.join(args.folder, f"{args.dco_type}_at_formation.h5"), "r") as f:
+        if "initC_at_DCO" in f:
+            all_initC_at_DCOs = load_initC(os.path.join(args.folder, f"{args.dco_type}_at_formation.h5"), key="initC_at_DCO", settings_key="initC_at_DCO_settings")
+        else:
+            all_initC_at_DCOs = None
+    print(f"Loaded {len(all_initC_at_DCOs) if all_initC_at_DCOs is not None else 0} initC_at_DCO in {time.time() - lap:.2f} seconds.")
 
     if args.pessimistic:
         print("Using pessimistic CE assumption: removing systems that would have been removed under this assumption.")
@@ -357,30 +396,35 @@ def main():
 
     f_detect_dict = {}
     p_mws = []
+    total_weight_list = []
     for inst in range(args.n_instances):
         print(f"Running Milky Way instance {inst + 1}/{args.n_instances}...")
         start = time.time()
         if args.retain_intrinsic:
             print("Retaining the intrinsic population of DCOs.")
-        f_detect, p_mw = evolve_milky_way_instance(
-            all_formation_rows, all_kick_infos, all_initCs, n_per_instance=args.n_per_instance,
-            oversample_factor=10 if args.dco_type == "NSWD" else 8,
-            retain_intrinsic=args.retain_intrinsic
+        f_detect, p_mw, weights_all = evolve_milky_way_instance(
+            all_formation_rows, all_kick_infos, all_initCs, all_initC_at_DCOs,
+            n_per_instance=args.n_per_instance,
+            oversample_factor=5,
+            retain_intrinsic=args.retain_intrinsic,
+            variation=args.variation
         )
         if p_mw is not None:
             p_mw.bpp["MW_instance"] = inst
             p_mws.append(p_mw)
+        total_weight_list.append(weights_all)
 
         for key in f_detect.keys():
             if key not in f_detect_dict:
                 f_detect_dict[key] = [f_detect[key]]
             else:
                 f_detect_dict[key].append(f_detect[key])
-        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction for LISA final position: {f_detect['lisa_10yr_final_pos']:.4e}")
+        print(f"  Instance {inst + 1} finished in {time.time() - start:.2f} seconds. Detectable fraction for LISA final position: {f_detect['lisa_8yr_final_pos_SNRgt7']:.4e}")
 
     p_mw_all = cogsworth.pop.concat(*p_mws)
     f_detect_df = pd.DataFrame(f_detect_dict)
-    print(f"Mean detectable fraction for LISA 10yr final pos: {f_detect_df['lisa_10yr_final_pos'].mean():.4e}")
+    print(f"Mean detectable fraction for LISA 8yr final pos, SNR > 7: {f_detect_df['lisa_8yr_final_pos_SNRgt7'].mean():.4e}")
+    print(f"Mean detectable fraction for LISA 4yr final pos, SNR > 12: {f_detect_df['lisa_4yr_final_pos_SNRgt12'].mean():.4e}")
 
     sfh = cogsworth.sfh.StarFormationHistory()
     for var in ["_x", "_y", "_z", "_v_x", "_v_y", "_v_z", "_tau", "_Z"]:
@@ -392,6 +436,9 @@ def main():
     p_mw_all.save(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_in_band_{args.suffix}.h5"), overwrite=True)
     f_detect_df.to_hdf(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_f_detect_{args.suffix}.h5"), key="f_detect", mode="w")
 
+    with h5.File(os.path.join(args.output_folder, f"{args.dco_type}{pessimistic_str}_f_detect_{args.suffix}.h5"), "a") as f:
+        f.create_dataset("total_weights", data=np.array(total_weight_list))
+
     print(f"Saved detectable population and detectable fractions to {args.output_folder}.")
     print(f"Total time for {args.n_instances} instances: {time.time() - full_start:.2f} seconds.\n\n\n")
 
@@ -400,3 +447,4 @@ if __name__ == "__main__":
     main()
 
 # python sample_detectable_population.py -f /mnt/ceph/users/twagg/lisa-dcos/fiducial/ -d NSWD -N 500000 -n 1 -o /mnt/ceph/users/twagg/lisa-dcos/fiducial/detection_files -s test
+# python sample_detectable_population.py -d NSWD -N 500000 -n 1  -s test -v fiducial

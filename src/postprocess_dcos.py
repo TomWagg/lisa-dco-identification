@@ -29,6 +29,7 @@ def postprocess(dco_type, folder):
 
     formation_rows_list = []
     initC_list = []
+    initC_at_DCO_list = []
 
     files = np.sort(files)
     for file in files:
@@ -66,6 +67,8 @@ def postprocess(dco_type, folder):
             with h5.File(f"{input_folder}/{file}", "r") as f:
                 formation_rows["weights"] = f["stroopwafel"]["weights"][...][f["stroopwafel"]["is_hit"][...]]
 
+            initC_list.append(initC.loc[formation_rows_all_cols["bin_num"]])
+
             print(f"    [{time() - lap:.2f}s] Found formation rows and weights")
             lap = time()
 
@@ -95,24 +98,29 @@ def postprocess(dco_type, folder):
                 initC_at_formation = initC.loc[formation_rows_all_cols["bin_num"]]
                 shared_columns = initC.columns.intersection(formation_rows_all_cols.columns)
                 initC_at_formation[shared_columns] = formation_rows_all_cols[shared_columns]
-                initC_list.append(initC_at_formation)
+                initC_at_DCO_list.append(initC_at_formation)
 
             formation_rows_list.append(formation_rows)
 
         print(f"  [{time() - file_start_time:.2f}s] Finishing processing {file}")
 
     all_formation_rows = pd.concat(formation_rows_list, ignore_index=True)
-    all_formation_rows.to_hdf(f"{folder}/{dco_type}_formation_rows.h5", key="formation_rows", mode="w")
+    all_formation_rows.to_hdf(f"{folder}/{dco_type}_at_formation.h5", key="formation_rows")
 
     all_initC = pd.concat(initC_list, ignore_index=True)
-    save_initC(f"{folder}/{dco_type}_initC.h5", all_initC, key="initC")
+    save_initC(f"{folder}/{dco_type}_at_formation.h5", all_initC, key="initC")
+
+    if len(initC_at_DCO_list) > 0:
+        all_initC_at_DCO = pd.concat(initC_at_DCO_list, ignore_index=True)
+        save_initC(f"{folder}/{dco_type}_at_formation.h5", all_initC_at_DCO,
+                key="initC_at_DCO", settings_key="initC_at_DCO_settings")
 
     kick_infos = [pd.read_hdf(f"{input_folder}/{file}", key="kick_info")[
         ["tphys", "star", "delta_vsysx_1", "delta_vsysy_1", "delta_vsysz_1", "bin_num"]
     ] for file in os.listdir(input_folder) if file.startswith(f"{dco_type}_Z_")]
     all_kick_infos = pd.concat(kick_infos, ignore_index=True)
     all_kick_infos.index = all_kick_infos.index.values // 2
-    all_kick_infos.to_hdf(f"{folder}/{dco_type}_kick_info.h5", key="kick_info", mode="w")
+    all_kick_infos.to_hdf(f"{folder}/{dco_type}_at_formation.h5", key="kick_info")
 
     print(f"Finished processing {dco_type} in {time() - start_time:.2f}s")
 
