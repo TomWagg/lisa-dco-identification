@@ -44,54 +44,22 @@ def get_normalisations(folders, dco_types, f_trunc_kwargs={}, MW_SF=10.4e10):
     pessimistic_n_targets = {f"{dco_type}_pessimistic": [] for dco_type in dco_types}
     for folder in folders:
         for dco_type in dco_types:
-            n_target, pessimistic_n_target = get_n_target(
+            get_n_target(
                 folder=folder, dco_type=dco_type, f_trunc=f_truncs[dco_type],
                 MW_weights=MW_weights, MW_SF=MW_SF)
-            n_targets[dco_type].append(n_target)
-            pessimistic_n_targets[f"{dco_type}_pessimistic"].append(pessimistic_n_target)
 
-    both_n_targets = {**n_targets, **pessimistic_n_targets}
-
-    # get model names from the last folder in the path, account for trailing slashes
-    model_names = [os.path.basename(os.path.normpath(folder)) for folder in folders]
-
-    df = pd.DataFrame(both_n_targets, index=model_names)
-    return df
+    return
 
 
 def get_n_target(folder, dco_type, f_trunc, MW_weights, MW_SF):
-    print(f"\n\nCalculating n_target for {dco_type} in {folder}")
-    # read in the formation rows for this folder and dco_type
-    all_formation_rows = pd.read_hdf(f"{folder}/{dco_type}_at_formation.h5", key="formation_rows")
-
-    # track the star forming mass and n_target at each metallicity bin
-    star_forming_mass_at_Z = []
-    n_target_at_Z = []
-    pessimistic_n_target_at_Z = []
+    print(f"Calculating n_target for {dco_type} in {folder}")
 
     # loop over metallicities
     for Z in const.Z_BIN_CENTRES:
-        print(f"  Processing Z = {Z}")
-        # load the file and calculate the total star forming mass, accounting for weights
-        with h5.File(f"{folder}/stroopwafel_files/{dco_type}_Z_{Z}.h5", "r") as f:
-            mass_1, q = f["stroopwafel"]["samples"][...][:, 0], f["stroopwafel"]["samples"][...][:, 1]
-            mass_2 = mass_1 * q
-            weights = f["stroopwafel"]["weights"][...]
-            star_forming_mass_at_Z.append(np.sum((mass_1 + mass_2) * weights))
+        if not os.path.isfile(f"{folder}/stroopwafel_files/{dco_type}_Z_{Z}.h5"):
+            print(f"    File {folder}/stroopwafel_files/{dco_type}_Z_{Z}.h5 does not exist, skipping")
+            continue
 
-        # track the number of target systems, again accounting for weights
-        formation_rows_Z = all_formation_rows[all_formation_rows["metallicity"] == Z]
-        pessimistic_formation_rows_Z = formation_rows_Z[~formation_rows_Z["remove_if_pessimistic"]]
-        n_target_at_Z.append(np.sum(formation_rows_Z["weights"].values))
-        pessimistic_n_target_at_Z.append(np.sum(pessimistic_formation_rows_Z["weights"].values))
-
-    star_forming_mass_at_Z = np.array(star_forming_mass_at_Z)
-    n_target_at_Z = np.array(n_target_at_Z)
-    pessimistic_n_target_at_Z = np.array(pessimistic_n_target_at_Z)
-
-    n_target = np.sum(n_target_at_Z * MW_weights / (star_forming_mass_at_Z / f_trunc)) * MW_SF
-    pessimistic_n_target = np.sum(pessimistic_n_target_at_Z * MW_weights / (star_forming_mass_at_Z / f_trunc)) * MW_SF
-    return n_target, pessimistic_n_target
 
 def main():
     parser = argparse.ArgumentParser()
@@ -108,12 +76,9 @@ def main():
 
     folders = [os.path.join(args.base_folder, folder) for folder in args.folders]
     df = get_normalisations(folders, args.dco_types)
-    print(df)
-
-    df.to_hdf(f"{args.base_folder}/normalisations.h5", key="n_targets", mode="w")
 
 
 if __name__ == "__main__":
     main()
 
-# python norm.py -b /mnt/ceph/users/twagg/lisa-dcos -f fiducial alpha_low alpha_high maltsev no_ecsn qcflag2 -d BHBH BHNS BHWD NSNS NSWD
+# python check_files.py -b /mnt/ceph/users/twagg/lisa-dcos -f fiducial alpha_low alpha_high maltsev no_ecsn qcflag2 -d BHBH BHNS BHWD NSNS NSWD

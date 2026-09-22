@@ -36,7 +36,7 @@ else:
 
 def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, all_initC_at_DCOs=None,
                               n_per_instance=500_000, oversample_factor=5,
-                              retain_intrinsic=False, variation="fiducial"):
+                              retain_intrinsic=False, variation="fiducial", cores=2):
     lap = time.time()
 
     # draw a random sample, weighted by the Milky Way metallicity distribution
@@ -107,7 +107,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, al
         ini_file=f"/mnt/home/twagg/projects/frank-lisa/settings/{variation}.ini",
         # evolve through MW, only tracking end point, just 2 processes
         galactic_potential=gp.MilkyWayPotential(version='v2'),
-        processes=2, store_entire_orbits=False,
+        processes=cores, store_entire_orbits=False,
         # make retries more often, but not quite so large a decrease in timestep
         # (avoids more failures without tanking runtime)
         orbit_integration_retry_settings={
@@ -136,10 +136,9 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, al
     rand_kicks[['disrupted', 'delta_vsysx_2', 'delta_vsysy_2', 'delta_vsysz_2']] = 0.0
 
     # save both to the population
-    p._initial_binaries = rand_initC
+    p._initial_binaries = rand_initC.copy()
     p._initial_binaries["MW_Z_weight"] = rand_sample["MW_Z_weight"].values
     p._initial_binaries["metallicity"] = rand_sample["metallicity"].values
-    p._initial_binaries = p._initial_binaries.copy()
 
     p._kick_info = rand_kicks
 
@@ -185,7 +184,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, al
             raise ValueError("RLOF systems require initC_at_DCO data to re-evolve with COSMIC, but no initC data was provided.")
         ibt = rand_initC_at_DCO.loc[p_rlof.bpp["bin_num"]].copy()
         ibt["tphysf"] = p_rlof.initial_galaxy.tau.to(u.Myr).value
-        re_ev_bpp, _, _, _ = Evolve.evolve(ibt, nproc=2)
+        re_ev_bpp, _, _, _ = Evolve.evolve(ibt, nproc=cores)
 
         # keep only the last row of the bpp (present state)
         re_ev_bpp = re_ev_bpp.drop_duplicates(subset="bin_num", keep="last")
@@ -205,7 +204,7 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, al
     # step 4: mask out the systems that are not inspiraling at present day
     # --------------------------------------------------------------------
     sources = p_gw.to_legwork_sources(distances=np.full(len(p_gw), 10.0) * u.pc)
-    sources.n_proc = 2
+    sources.n_proc = cores
 
     # first calculate the merger time approximately and jettison anything that merged over 100 Myr ago
     sources.get_merger_time(exact=False)
@@ -294,6 +293,10 @@ def evolve_milky_way_instance(all_formation_rows, all_kick_infos, all_initCs, al
 
         # print(len(sources_insp_masked), "len sources_insp_masked after concat")
 
+    # append present day sep and eccentricity to the bpp for the masked population
+    p_masked.bpp["sep_present_day"] = sources_insp_masked.a.to(u.Rsun).value
+    p_masked.bpp["ecc_present_day"] = sources_insp_masked.ecc
+
     initial_distance = SkyCoord(
         x=p_masked.initial_galaxy.x, y=p_masked.initial_galaxy.y, z=p_masked.initial_galaxy.z,
         v_x=p_masked.initial_galaxy.v_x, v_y=p_masked.initial_galaxy.v_y, v_z=p_masked.initial_galaxy.v_z,
@@ -358,6 +361,7 @@ def main():
     parser.add_argument("-p", "--pessimistic", action="store_true", help="Use the pessimistic CE assumption when calculating the detectable fraction.")
     parser.add_argument("-r", "--retain_intrinsic", action="store_true", help="Retain the intrinsic population of DCOs, rather than just the detectable ones.")
     parser.add_argument("-v", "--variation", type=str, default="fiducial", help="Variation of the model to use (default: fiducial).")
+    parser.add_argument('-c', '--cores', type=int, default=2, help='Number of cores to use for parallel processing (default: 2).')
 
     args = parser.parse_args()
 
@@ -407,7 +411,8 @@ def main():
             n_per_instance=args.n_per_instance,
             oversample_factor=5,
             retain_intrinsic=args.retain_intrinsic,
-            variation=args.variation
+            variation=args.variation,
+            cores=args.cores
         )
         if p_mw is not None:
             p_mw.bpp["MW_instance"] = inst

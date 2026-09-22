@@ -13,6 +13,8 @@ def get_pop_and_f_detect(folder, dco_type):
     f_det_files = []
 
     for file in os.listdir(folder):
+        if "test" in file:
+            continue
         if file.startswith(f"{dco_type}_in_band"):
             pop_files.append(file)
         elif file.startswith(f"{dco_type}_f_detect") and file.endswith(".h5"):
@@ -63,6 +65,7 @@ def main():
     parser.add_argument("-d", "--dco_type", type=str, nargs="+", required=True, help="Type of DCO (e.g., NSWD, NSNS, BHWD, BHNS, BHBH).")
     parser.add_argument("-o", "--output-path", type=str, required=True, help="Output path for the concatenated population and f_detect array.")
     parser.add_argument("-O", "--overwrite", action="store_true", help="Overwrite existing files if they exist.")
+    parser.add_argument('-t', '--trim-pessimistic', action='store_true', help="Trim the pessimistic flag from the file name")
 
     args = parser.parse_args()
 
@@ -70,8 +73,11 @@ def main():
 
     for dco_type in args.dco_type:
         print(f"Processing {dco_type}...")
-        output_pop_path = os.path.join(args.output_path, f"{dco_type}_in_band.h5")
-        output_f_detect_path = os.path.join(args.output_path, f"{dco_type}_f_detect.h5")
+        output_dco_type = dco_type
+        if args.trim_pessimistic:
+            output_dco_type = dco_type.replace("_pessimistic", "")
+        output_pop_path = os.path.join(args.output_path, f"{output_dco_type}_in_band.h5")
+        output_f_detect_path = os.path.join(args.output_path, f"{output_dco_type}_f_detect.h5")
         if os.path.exists(output_pop_path) and not args.overwrite:
             raise FileExistsError(f"{output_pop_path} already exists. Use --overwrite to overwrite.")
         if os.path.exists(output_f_detect_path) and not args.overwrite:
