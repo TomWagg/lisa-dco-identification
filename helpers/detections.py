@@ -305,7 +305,7 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
 
 
 def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco_types=None,
-                    colours=None, duration=10, data_dir=DATA_DIR, width=0.6, pos_dodge=0.09,
+                    colours=None, duration=4, snr_lim=7, data_dir=DATA_DIR, width=0.6, pos_dodge=0.09,
                     log=True, floor=0.1, sharey=False, fig=None, ax=None, show=True,
                     detections=None, save=None, show_sec_ax=False, sec_duration=8,
                     fiducial="fiducial", optimistic_label=None, letter_labels=False,
@@ -391,7 +391,7 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
 
     if detections is None:
         detections = load_detections(models, n_targets, detectors=detectors, dco_types=dco_types,
-                                     duration=duration, data_dir=data_dir)
+                                     duration=duration, data_dir=data_dir, snr_lim=snr_lim)
 
     # one column per model (pessimistic), plus the optimistic fiducial straight after it
     rows, _ = _model_rows(models, fiducial=fiducial)
@@ -433,6 +433,9 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                     if not np.isfinite(med):
                         continue
 
+                    if ylim is not None and lo < ylim[0]:
+                        ax.scatter(c_ind + offset, 0.1, color=colours[dco], marker="v", facecolor="none" if not filled else colours[dco])
+
                     # truncate error bars that would extend below the axis on a log scale
                     lo = max(lo, floor) if log else lo
 
@@ -461,7 +464,7 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
 
         axis.set_xticks(range(len(columns)))
         axis.set_xlim(-0.5, len(columns) - 0.5)
-        axis.set_ylabel(f"Number of {DETECTOR_LABELS[detector]}\ndetections ({duration} yr)")
+        axis.set_ylabel(f"Number of {DETECTOR_LABELS[detector]} detections\n({duration} yr observations, S/N > {snr_lim})")
         if log:
             axis.set_yscale("log")
 
