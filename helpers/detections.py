@@ -453,7 +453,7 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                     # if the fiducial, pessimistic, final positions, shade across every axis
                     if model == "fiducial" and variant == "_pessimistic" and pos == "final_pos":
                         # axis.axhspan(mid[0] - lower[0], mid[0] + upper[0], color=colours[dco], alpha=0.1, zorder=0)
-                        axis.axhline(mid[0], color=colours[dco], zorder=0, linestyle=":", lw=1)
+                        axis.axhline(mid[0], color=colours[dco], zorder=0, linestyle="--", lw=1.5)
 
                 if len(x) == 0:
                     continue

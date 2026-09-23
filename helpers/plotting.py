@@ -4,6 +4,30 @@ from scipy.interpolate import interp1d
 import matplotlib.ticker as mticker
 import astropy.units as u
 import matplotlib.pyplot as plt
+import legwork as lw
+
+from copy import copy
+import const
+import uncertainties as unc
+
+
+plt.rc('font', family='serif')
+plt.rcParams['text.usetex'] = False
+fs = 24
+
+# update various fontsizes to match
+params = {'figure.figsize': (12, 8),
+          'legend.fontsize': 0.7*fs,
+          'legend.title_fontsize': 0.8*fs,
+          'axes.labelsize': fs,
+          'xtick.labelsize': 0.9 * fs,
+          'ytick.labelsize': 0.9 * fs,
+          'axes.linewidth': 1.1,
+          'xtick.major.size': 7,
+          'xtick.minor.size': 4,
+          'ytick.major.size': 7,
+          'ytick.minor.size': 4}
+plt.rcParams.update(params)
 
 
 class LogDecadeMinorLocator(mticker.Locator):
@@ -288,107 +312,6 @@ def bootstrapped_kde_fast(variable, weights, ax, seeds=None, bw_adjust=None, nor
     return ax
 
 
-def bootstrapped_ecdf(variable, weights, ax, seeds=None,
-                      bootstraps=200, normalisation=None, x_count=10000,
-                      log_scale=(False, False), color="tab:blue", label=None,
-                      **kwargs):
-    """Create a bootstrapped weighted ECDF plot.
-
-    Parameters
-    ----------
-    variable : `float/array`
-        Variable that you want to make a ECDF of.
-    weights : 'float/array'
-        Weights associated with each variable (see all to 1 for unweighted)
-    seeds : `int/array`
-        Seeds that make the binaries in COMPAS
-    ax : `matplotlib Axis`
-        Axis on which to plot
-    bootstraps : `int`, optional
-        How many bootstraps to do, by default 200
-    normalisation : `float`, optional
-        A value to normalise the CDF to
-    x_count : `int`, optional
-        How many x values to evaluate at, by default 500
-    log_scale : `tuple`, optional
-        Whether each axis should be log scaled, by default (False, False)
-    color : `str`, optional
-        Colour for the ECDF, by default "tab:blue"
-    label : `str`, optional
-        Label for the plotted ECDF, by default None
-
-    Returns
-    -------
-    ax : `matplotlib Axis`
-        Axis on which ECDF is plotted
-    """
-    if seeds is None:
-        seeds = np.arange(len(variable))
-
-    # store the ECDF values for each bootstrap
-    ecdf_vals = np.zeros((bootstraps, x_count))
-
-    # record indices to sample from
-    indices = np.arange(len(variable))
-
-    # decide on x values to evaluate at (based on log scaling)
-    if log_scale[0]:
-        x_vals = np.logspace(np.log10(np.min(variable)), np.log10(np.max(variable)), x_count)
-    else:
-        x_vals = np.linspace(np.min(variable), np.max(variable), x_count)
-
-    sorted_order = np.argsort(seeds)
-    sorted_seeds = seeds[sorted_order]
-
-    # perform bootstrapping
-    for i in range(bootstraps):
-        _, starts, counts = np.unique(sorted_seeds, return_counts=True, return_index=True)
-        res = np.split(sorted_order, starts[1:])
-        inds = np.array([np.random.choice(r) if len(r) > 1 else r[0] for r in res])
-
-        loop_variable = variable[inds]
-        loop_weights = weights[inds] * counts
-
-        # record indices to sample from
-        indices = np.arange(len(loop_variable))
-
-        # sample indices
-        boot_index = np.random.choice(indices, size=len(indices), replace=True)
-
-        boot_var = loop_variable[boot_index]
-        boot_weight = loop_weights[boot_index]
-
-        # create a CDF
-        sorted_index = np.argsort(boot_var)
-        y_vals = np.cumsum(boot_weight[sorted_index])
-        if normalisation is not None:
-            y_vals = y_vals / np.sum(boot_weight) * normalisation
-
-        # interpolate the CDF
-        func = interp1d(boot_var[sorted_index], y_vals, bounds_error=False,
-                        fill_value=(0.0, np.max(y_vals)))
-
-        # evaluate the interpolation
-        ecdf_vals[i] = func(x_vals)
-
-    # calculate 1- and 2- sigma percentiles
-    percentiles = np.percentile(ecdf_vals, [15.89, 84.1, 2.27, 97.725], axis=0)
-
-    # plot uncertainties as filled areas
-    ax.fill_between(x_vals, percentiles[2], percentiles[3], alpha=0.15, color=color, **kwargs)
-    ax.fill_between(x_vals, percentiles[0], percentiles[1], alpha=0.3, color=color, **kwargs)
-
-    ax.plot(x_vals, np.median(ecdf_vals, axis=0), color=color, label=label, zorder=10)
-
-    if log_scale[0]:
-        ax.set_xscale("log")
-    if log_scale[1]:
-        ax.set_yscale("log")
-
-    return ax
-
-
-
 def nice_transparent_hist(ax, data, bins, label, colour, density, lw=2, alpha=0.4, cumulative=False, **kwargs):
     ax.hist(data, bins=bins, color=colour, lw=lw, histtype='step', density=density, label=label, cumulative=cumulative, **kwargs)
     ax.hist(data, bins=bins, color=colour, alpha=alpha, density=density, cumulative=cumulative, **kwargs)
@@ -423,3 +346,301 @@ def estimate_scale_height_cdf(z, weights=None, R=None, Rlims=(7.5, 8.5), verbose
     scale_height = sorted_z[cdf >= (1 - 1 / np.e)][0]
 
     return scale_height
+
+
+def bootstrap_cdf(data, n_samples=25_000, n_bootstraps=10, n_bins=250, weights=None, norm=False, fig=None, ax=None,
+                  reversed_cdf=True,
+                  xlim=(0, np.inf), colour=None, label=None, med_kwargs={}, fill_kwargs={}):
+    if fig is None or ax is None:
+        fig, ax = plt.subplots()
+
+    if weights is None:
+        weights = np.ones(len(data))
+
+    default_med_kwargs = {'color': colour, 'lw': 3, 'label': label}
+    default_fill_kwargs = {'color': colour, 'alpha': 0.15, 'lw': 1}
+    med_kwargs_comb = default_med_kwargs.copy()
+    med_kwargs_comb.update(med_kwargs)
+    fill_kwargs_comb = default_fill_kwargs.copy()
+    fill_kwargs_comb.update(fill_kwargs)
+
+    sample_inds = np.random.choice(len(data), size=(n_samples, n_bootstraps), replace=True)
+    samples = data[sample_inds]
+    sample_weights = weights[sample_inds]
+    order = np.argsort(samples, axis=0)
+
+    # apply order to samples and weights to get the CDFs, can't just immediately mask
+    # ensure that shapes are the same after resorting!
+    ordered_samples = np.take_along_axis(samples, order, axis=0)
+    ordered_weights = np.take_along_axis(sample_weights, order, axis=0)
+
+    cdfs = np.cumsum(ordered_weights, axis=0)
+    if reversed_cdf:
+        cdfs = cdfs.max() - cdfs
+    if norm:
+        cdfs /= cdfs.max(axis=0)
+
+    # bin the CDFs to make them have a consistent x-axis for plotting
+    bin_edges = np.linspace(*xlim, n_bins)
+    bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    binned_cdfs = np.zeros((len(bin_centres), n_bootstraps))
+    for i in range(n_bootstraps):
+        binned_cdfs[:, i] = np.interp(bin_centres, ordered_samples[:, i], cdfs[:, i])
+
+    med = np.median(binned_cdfs, axis=1)
+    low = np.percentile(binned_cdfs, 25, axis=1)
+    high = np.percentile(binned_cdfs, 75, axis=1)
+
+    ax.fill_between(bin_centres, low, high, **fill_kwargs_comb)
+    ax.plot(bin_centres, med, **med_kwargs_comb)
+    ax.set_yscale('log')
+
+    return fig, ax, ordered_samples, bin_centres, med, low, high
+
+
+def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detectable_pops, counts,
+                             n_boot=5000, save=None, show=True):
+
+    height_where_exceeds_wdwds = {}
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 11), layout="tight")
+
+    squish = 0.032
+    pie_positions = [
+        [0, 0.5 - squish, 1/3, 0.5], [1/3, 0.5 - squish, 1/3, 0.5], [2/3, 0.5 - squish, 1/3, 0.5],
+        [1/6, squish, 1/3, 0.5], [1/2, squish, 1/3, 0.5],
+    ]
+
+    _, _, _, _, wdwd_med, _, _ = bootstrap_cdf(
+        np.abs(wdwd_dist[wdwd_dist.tau < 100 * u.Gyr].z.value), n_samples=25_000, n_bootstraps=n_boot, norm=False,
+        colour=const.STAR_COLOUR, fig=fig, ax=axes[1, 1], label="Star formation\n(WDWD)", xlim=(0, 10)
+    );
+
+    for dco_type in const.DCO_TYPES:
+        w = lisa_pops[dco_type].bpp["weights"]
+
+        max_measured_forb = lisa_sources[dco_type].f_orb + unc_data[dco_type]["delta_forb"]
+        bootstrap_cdf(np.log10(max_measured_forb.value), n_samples=500, n_bootstraps=n_boot, n_bins=1000,
+                    norm=True, colour=const.DCO_COLOURS[dco_type], fig=fig, ax=axes[0, 0], label=dco_type, xlim=(-4.5, -2),
+                    reversed_cdf=False)
+
+        min_measured_mass = lisa_sources[dco_type].m_c - unc_data[dco_type]["delta_m_c_over_m_c"] * lisa_sources[dco_type].m_c
+        min_measured_mass[min_measured_mass < 0] = min(abs(min_measured_mass))
+
+        bootstrap_cdf(np.log10(min_measured_mass.value), n_samples=500, n_bootstraps=n_boot, n_bins=1000,
+                    norm=True, colour=const.DCO_COLOURS[dco_type], fig=fig, ax=axes[0, 1], label=dco_type, xlim=(-1.5, 1.1))
+
+
+        # pie charts of measurable eccentricity, nested inside the bottom-left slot
+        at_least_two_harmonics = unc_data[dco_type]["detectable_harmonics"] >= 2
+        ecc_detectable = lisa_sources[dco_type].ecc >= unc.min_detectable_ecc(lisa_sources[dco_type].snr, lisa_sources[dco_type].f_orb * lisa_sources[dco_type].max_snr_harmonic)
+        ecc_detectable_no_fmin = lisa_sources[dco_type].ecc >= unc.min_detectable_ecc(lisa_sources[dco_type].snr, lisa_sources[dco_type].f_orb * lisa_sources[dco_type].max_snr_harmonic, f_min=0 * u.mHz)
+        w = lisa_pops[dco_type].bpp["weights"]
+
+        measureable_ecc = w[at_least_two_harmonics | ecc_detectable].sum() / w.sum()
+        measureable_ecc_no_fmin = w[at_least_two_harmonics | ecc_detectable_no_fmin].sum() / w.sum()
+
+        if measureable_ecc < 0.005:
+            measureable_ecc = 0.0
+            measureable_ecc_no_fmin = 0.0
+
+        pie_ax = axes[1, 0].inset_axes(pie_positions[const.DCO_TYPES.index(dco_type)], transform=axes[1, 0].transAxes)
+
+        # outer ring is with the frequency cut, inner ring is without
+        for vals, rad, alpha in zip(
+            [[measureable_ecc, 1 - measureable_ecc], [measureable_ecc_no_fmin, 1 - measureable_ecc_no_fmin]],
+            [1, 0.7],
+            [1, 0.8]
+        ):
+            pie_ax.pie(
+                vals,
+                colors=[const.DCO_COLOURS[dco_type], "lightgrey"],
+                startangle=90,
+                counterclock=False,
+                radius=rad,
+                wedgeprops=dict(width=0.3, edgecolor='white', alpha=alpha)
+            )
+        pie_ax.annotate(dco_type, xy=(0, 0), ha='center', va='center', fontsize=0.6*fs,
+                        fontweight='bold', color=const.DCO_COLOURS[dco_type])
+
+        # remove the default ±1.25 padding so the outer ring touches the axis edges
+        pie_ax.set_xlim(-1.02, 1.02)
+        pie_ax.set_ylim(-1.02, 1.02)
+
+        if counts[dco_type] > 0:
+            _, _, _, bin_centres, dco_med, _, _ = bootstrap_cdf(
+                np.abs(detectable_pops[dco_type].final_pos[:, 2].value), n_samples=counts[dco_type], n_bootstraps=n_boot,
+                norm=False, colour=const.DCO_COLOURS[dco_type], fig=fig, ax=axes[1, 1], xlim=(0, 10)
+            );
+            above = bin_centres[dco_med > wdwd_med]
+            if len(above) > 0:
+                first_crossing = above[0]
+                height_where_exceeds_wdwds[dco_type] = first_crossing
+                print(f"{dco_type} first crosses WDWD at {first_crossing:1.2f} kpc")
+
+                # ax.axvline(first_crossing, 0.7, 1, color=const.DCO_COLOURS[dco_type], ls="--", lw=1.5)
+                axes[1, 1].plot([first_crossing, first_crossing], [dco_med[dco_med > wdwd_med][0], 2e3], color=const.DCO_COLOURS[dco_type], ls="--", lw=2)
+
+            else:
+                height_where_exceeds_wdwds[dco_type] = np.inf
+                print(f"{dco_type} never crosses WDWD")
+        else:
+            height_where_exceeds_wdwds[dco_type] = np.inf
+            print(f"{dco_type} never crosses WDWD (no sources)")
+
+    axes[0, 0].axvline(np.log10(3e-4), color='k', ls="--", lw=2)
+    axes[0, 0].axvspan(np.log10(3e-4), -2, color='k', alpha=0.1)
+    axes[0, 0].set(
+        xlim=(-4.5, -2),
+        xlabel=r"$f_{\rm orb} + \Delta f_{\rm orb} \, [\rm Hz]$",
+        ylabel=r"$F_{\rm LISA, 8yr} (< f_{\rm orb} + \Delta f_{\rm orb})$",
+        yscale="linear",
+        ylim=(0, 1),
+    )
+
+    axes[1, 0].set_xticks([])
+    axes[1, 0].set_yticks([])
+    axes[1, 0].set_xlabel("Fraction with\nmeasureable eccentricity")
+
+    # axes[1, 1].legend(fontsize=0.65 * fs)
+    axes[1, 1].set_xlim(0, 10)
+    axes[1, 1].set_ylim(1e-2, 2e3)
+
+    axes[1, 1].xaxis.set_minor_locator(plt.MultipleLocator(0.25))
+
+    top_ax = axes[1, 1].secondary_xaxis('top')
+    top_ax.xaxis.set_minor_locator(plt.MultipleLocator(0.25))
+    top_ax.set_xticklabels([])
+
+    axes[1, 1].set(
+        xlabel="Height above Galactic plane, |z| [kpc]",
+        ylabel=r"$N_{\rm LISA, 8yr} (> |z|)$"
+    )
+        
+    axes[0, 1].set(
+        yscale="linear",
+        ylim=(0, None),
+        # ylim=(1e-1, None),
+        xlim=(-1.5, 1.1),
+        xlabel=r"$\mathcal{M}_c - \Delta \mathcal{M}_c \, [\rm M_\odot]$",
+        ylabel=r"$F_{\rm LISA, 8yr} (> \mathcal{M}_c - \Delta \mathcal{M}_c)$"
+    )
+    max_wdwd_mass = lw.utils.chirp_mass(1.44, 1.44)
+    axes[0, 1].axvline(np.log10(max_wdwd_mass), color='k', ls="--", lw=2)
+    axes[0, 1].axvspan(-1.5, np.log10(max_wdwd_mass), color='k', alpha=0.1)
+
+    for ax in [axes[0, 0], axes[0, 1]]:
+        fake_log_axis(ax, axis="x")
+
+    handles, labels = axes[0, 1].get_legend_handles_labels()
+    handles = [copy(h) for h in handles]
+    for h in handles:
+        h.set_linewidth(7)
+    fig.legend(handles, labels, loc="lower center", ncol=5, fontsize=0.85*fs, bbox_to_anchor=(0.5, 0.99))
+
+    for letter, ax in zip("abcd", axes.flatten()):
+        ax.annotate(letter, xy=(0.93 if letter == "b" else 0.04, 0.925 if letter != "c" else 0.09), xycoords="axes fraction", ha='left', va="center_baseline", fontsize=0.9*fs, color="grey", fontweight="bold",
+                    bbox=dict(boxstyle="circle", facecolor="lightgrey", edgecolor="grey", linewidth=2))
+
+    axes[1, 1].annotate("Star formation", xy=(0.25, 0.8), xycoords="axes fraction", ha='center', va="center", fontsize=0.7*fs, color=const.STAR_COLOUR, rotation=-42)
+
+    if save:
+        plt.savefig(save, bbox_inches="tight")
+    if show:
+        plt.show()
+    return fig, axes, height_where_exceeds_wdwds
+
+
+def plot_wdwd_distinguishers(
+        distinguishers,
+        col_labels=[r"$f_{\rm orb}$", r"$\mathcal{M}_c$", r"$e$", r"$|z|$",
+                    r"$\{f_{\rm orb}, \mathcal{M}_c\}$", r"$\{f_{\rm orb}, \mathcal{M}_c, e\}$",
+                    r"$\{f_{\rm orb}, \mathcal{M}_c, e, |z|\}$"],
+        log_scale=True,
+        save=None, show=True,
+        model_labels=None,
+    ):
+    models = distinguishers.index.get_level_values("model").unique()
+    n_models = distinguishers.index.get_level_values("model").nunique()
+    fig, axes = plt.subplots(n_models, 2, figsize=(15, 3 * n_models), gridspec_kw={"width_ratios": [4, 3]})
+    
+    fig.subplots_adjust(hspace=0.05, wspace=0.02)
+
+    x_vals = np.arange(len(distinguishers.columns))
+    x_offset = 0.15
+
+    zeros = []
+
+    for i, col in enumerate(distinguishers.columns):
+        for j, dco_type in enumerate(const.DCO_TYPES):
+            x_offseted = x_vals[i] + (j - 2) * x_offset
+
+            for model, ax in zip(models, axes[:, 0] if i < 4 else axes[:, 1]):
+                val = distinguishers.loc[(model, dco_type), col]
+                if val < 0.005:
+                    zeros.append((x_offseted, dco_type, ax))
+                else:
+                    ax.bar(x_offseted, val, color=const.DCO_COLOURS[dco_type], width=0.15, label=dco_type if i == 0 else None)
+                    # ax.scatter(x_offseted, val, color=const.DCO_COLOURS[dco_type], s=100, label=dco_type if i == 0 else None)
+
+    for ax in axes.flatten():
+        ax.set_xticks([])
+        ax.set_xticklabels([])
+        if not log_scale:
+            ax.yaxis.set_minor_locator(plt.MultipleLocator(0.1))
+
+        if log_scale:
+            ax.set_yscale("log")
+            ax.set_ylim(1e-3, 1)
+        else:
+            ax.set_ylim(0.0, 1.09)
+        ax.grid(which="both", alpha=0.2, axis='y')
+        ax.set_axisbelow(True)
+
+    for ax_set, x_set in zip([axes[:, 0], axes[:, 1]], [[0, 1, 2], [4, 5]]):
+        for ax in ax_set:
+            for x in x_set:
+                ax.axvline(x + 0.5, color='k', ls="-", lw=3 if x == 3 else 1)
+    
+    
+
+    # axes[-1].set_xticks(x_vals)
+    for ax in axes[:, 0]:
+        ax.set_xlim(-0.5, 3.5)
+
+    for ax, model in zip(axes[:, 1], models):
+        ax.set_xlim(3.5, 6.5)
+        ax.set_yticklabels([])
+        ax.tick_params(axis='y', which='both', left=False, right=False)
+        ax.annotate(model_labels[model] if model_labels is not None else model, xy=(1.05, 0.5), xycoords="axes fraction", ha='center', va="center", fontsize=0.8*fs, rotation=-90)
+
+    if col_labels is None:
+        col_labels = distinguishers.columns
+
+    for i, l in zip([0, 1, 2, 3], col_labels):
+        axes[-1, 0].annotate(l, xy=(i, -0.05), xycoords=("data", "axes fraction"), ha='center', va="top", fontsize=0.9*fs if i < 4 else 0.7 * fs,
+                          rotation=0 if i < 4 else 0)
+    for i, l in zip([4, 5, 6], col_labels[4:]):
+        axes[-1, 1].annotate(l, xy=(i, -0.05), xycoords=("data", "axes fraction"), ha='center', va="top", fontsize=0.9*fs if i < 4 else 0.7 * fs,
+                            rotation=0 if i < 4 else 0)
+
+    axes[3, 0].set_ylabel("Fraction distinguished from WDWDs")
+
+    axes[0, 0].legend(loc='lower center', ncol=len(const.DCO_TYPES), fontsize=0.8*fs, bbox_to_anchor=(0.88, 1.01))
+
+    
+    fig.supxlabel("Properties used for distinguishing from WDWDs", fontsize=fs, y=0.07)
+        
+    if len(zeros) > 0:
+        for x, dco_type, ax in zeros:
+            og_ymin, og_ymax = ax.get_ylim()
+            ax.scatter(x, 1.1e-3 if log_scale else 0.05, color=const.DCO_COLOURS[dco_type], s=100, marker="X", alpha=0.75)
+            ax.set_ylim((og_ymin, og_ymax))
+
+    if save is not None:
+        plt.savefig(save, bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    return fig, axes
