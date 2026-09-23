@@ -164,9 +164,9 @@ def format_detections(lo, mid, hi, sig=2, missing=r"\nodata"):
 
 
 def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, dco_types=None,
-                    duration=10, data_dir=DATA_DIR, sig=1, missing=r"\nodata",
+                    duration=8, snr_lim=12, data_dir=DATA_DIR, sig=1, missing=r"\nodata",
                     label="tab:detections", caption=None, starred=True, just_tabular=True,
-                    detections=None, fiducial="fiducial", optimistic_label=None):
+                    detections=None, fiducial="fiducial", optimistic_label="Optimistic CE", position=None):
     """Write a LaTeX table of detectable DCO numbers, with models as rows.
 
     Columns are grouped by DCO type, then detector, then the position used for the sky
@@ -193,7 +193,7 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
     data_dir : `str`, optional
         Root directory containing the model subdirectories
     sig : `int`, optional
-        Significant figures for the smaller uncertainty, by default 2
+        Significant figures for the smaller uncertainty, by default 1
     missing : `str`, optional
         Placeholder for combinations that could not be loaded, by default ``\\nodata``
     label : `str`, optional
@@ -212,6 +212,10 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
     optimistic_label : `str`, optional
         Row label for the optimistic fiducial row, by default the optimistic entry of
         `VARIANT_LABELS`
+    position : `str`, optional
+        Which entry of `POSITIONS` to tabulate, by default None, which includes every
+        position. When a single position is given the position header level is dropped
+        since every column would be labelled identically
 
     Returns
     -------
@@ -220,6 +224,11 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
     """
     model_labels = {} if model_labels is None else model_labels
     dco_types = DCO_TYPES if dco_types is None else dco_types
+
+    if position is not None and position not in POSITIONS:
+        raise ValueError(f"position must be one of {POSITIONS}, not '{position}'")
+    positions = POSITIONS if position is None else [position]
+    show_position = len(positions) > 1
 
     optimistic, pessimistic = VARIANTS[0], VARIANTS[1]
     optimistic_label = VARIANT_LABELS[optimistic] if optimistic_label is None else optimistic_label
@@ -242,11 +251,11 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
 
     if detections is None:
         detections = load_detections(models, n_targets, detectors=detectors, dco_types=dco_types,
-                                     duration=duration, data_dir=data_dir)
+                                     duration=duration, data_dir=data_dir, snr_lim=snr_lim)
 
     # every data column is a (dco, detector, position) combination, in this order
-    data_cols = [(dco, det, pos) for dco in dco_types for det in detectors for pos in POSITIONS]
-    n_per_det = len(POSITIONS)
+    data_cols = [(dco, det, pos) for dco in dco_types for det in detectors for pos in positions]
+    n_per_det = len(positions)
     n_per_dco = len(detectors) * n_per_det
     env = "table*" if starred else "table"
 
@@ -265,36 +274,33 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
         r"\toprule",
     ])
 
-    # first header level: DCO type
-    row, rules = [""], []
-    for d_ind, dco in enumerate(dco_types):
-        start = 2 + d_ind * n_per_dco
-        row.append(rf"\multicolumn{{{n_per_dco}}}{{c}}{{{dco}}}")
-        rules.append(rf"\cmidrule(lr){{{start}-{start + n_per_dco - 1}}}")
-    lines.append(" & ".join(row) + r" \\")
-    lines.append(" ".join(rules))
-
-    # optional second header level: detector
+    # header levels as (group labels, columns spanned by each group), skipping any level
+    # whose labels would be identical across every column
+    levels = [(list(dco_types), n_per_dco)]
     if show_detector:
-        row, rules = [""], []
-        for d_ind, _ in enumerate(dco_types):
-            for det_ind, det in enumerate(detectors):
-                start = 2 + d_ind * n_per_dco + det_ind * n_per_det
-                row.append(rf"\multicolumn{{{n_per_det}}}{{c}}{{{DETECTOR_LABELS[det]}}}")
-                rules.append(rf"\cmidrule(lr){{{start}-{start + n_per_det - 1}}}")
-        lines.append(" & ".join(row) + r" \\")
-        lines.append(" ".join(rules))
+        levels.append(([DETECTOR_LABELS[det] for _ in dco_types for det in detectors], n_per_det))
+    if show_position:
+        levels.append(([POSITION_LABELS[pos] for _, _, pos in data_cols], 1))
 
-    # final header level: position
-    row = ["Model"] + [POSITION_LABELS[pos] for _, _, pos in data_cols]
-    lines.append(" & ".join(row) + r" \\")
+    for l_ind, (texts, span) in enumerate(levels):
+        # the model column heading sits on the bottom level, which needs no rules beneath
+        last = l_ind == len(levels) - 1
+        row, rules = ["Model" if last else ""], []
+        for g_ind, text in enumerate(texts):
+            start = 2 + g_ind * span
+            row.append(rf"\multicolumn{{{span}}}{{c}}{{{text}}}" if span > 1 else text)
+            if not last:
+                rules.append(rf"\cmidrule(lr){{{start}-{start + span - 1}}}")
+        lines.append(" & ".join(row) + r" \\")
+        if rules:
+            lines.append(" ".join(rules))
     lines.append(r"\midrule")
 
     # one row per model (plus the optimistic fiducial)
     for letter, (model, variant, _) in zip(letters, table_rows):
-        row = [letter]
+        row = [key[letter]]
         for dco, det, pos in data_cols:
-            lo, mid, hi = detections.loc[(model, variant if model == "fiducial" else "", dco, det, pos)]
+            lo, mid, hi = detections.loc[(model, variant, dco, det, pos)]
             row.append(format_detections(lo, mid, hi, sig=sig, missing=missing))
         lines.append(" & ".join(row) + r" \\")
 
@@ -575,7 +581,7 @@ def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label
 def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
                     missing=r"\nodata", label="tab:n_targets", caption=None, starred=False,
                     just_tabular=True, fiducial="fiducial", optimistic_label="Optimistic CE",
-                    return_key=False):
+                    return_key=False, norms={"BHBH": 1e5, "BHNS": 1e5, "NSNS": 1e4, "BHWD": 1e4, "NSWD": 1e5}):
     """Write a LaTeX table of the normalisation constants for each DCO type.
 
     Rows are models, labelled by letter, and columns are DCO types, matching the layout of
@@ -646,6 +652,7 @@ def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
 
     # single header row: model letter then one column per DCO type
     lines.append(" & ".join(["Model"] + list(dco_types)) + r" \\")
+    lines.append(r" & [$10^5$] & [$10^5$] & [$10^4$] & [$10^4$] & [$10^5$] \\")
     lines.append(r"\midrule")
 
     # one row per model (plus the optimistic fiducial)
@@ -662,8 +669,10 @@ def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
             if value is None or not np.isfinite(value):
                 formatted_val = missing
             else:
-                mantissa, exponent = f"{value:.{sig - 1}e}".split("e")
-                formatted_val = rf"${mantissa} \times 10^{{{int(exponent)}}}$"
+                normed_val = value / norms.get(dco, 1)
+                formatted_val = f"{normed_val:.2f}" if value > 100 else f"{normed_val:.3f}"
+                # mantissa, exponent = f"{value:.{sig - 1}e}".split("e")
+                # formatted_val = rf"${mantissa} \times 10^{{{int(exponent)}}}$"
             row.append(formatted_val)
         lines.append(" & ".join(row) + r" \\")
 
