@@ -501,7 +501,7 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
 
     axes[1, 0].set_xticks([])
     axes[1, 0].set_yticks([])
-    axes[1, 0].set_xlabel("Fraction with\nmeasureable eccentricity")
+    axes[1, 0].set_xlabel("Fraction with\nmeasurable eccentricity")
 
     # axes[1, 1].legend(fontsize=0.65 * fs)
     axes[1, 1].set_xlim(0, 10)
@@ -742,6 +742,7 @@ def plot_wdwd_distinguishers_variations(
             ax.set_ylim(0.0, 1.09)
         ax.grid(which="both", alpha=0.2, axis='y')
         ax.set_axisbelow(True)
+        ax.axhline(1, color='k', ls="--", lw=1)
 
     for ax_set, x_set in zip([axes[:, 0], axes[:, 1]], [[0, 1, 2], [4, 5]]):
         for ax in ax_set:
@@ -757,7 +758,7 @@ def plot_wdwd_distinguishers_variations(
         ax.set_yticklabels([])
         ax.tick_params(axis='y', which='both', left=False, right=False)
         ax.annotate(dco_type, xy=(1.05, 0.5), xycoords="axes fraction", ha='center', va="center",
-                    fontsize=0.8*fs, rotation=-90, fontweight="bold", color=const.DCO_COLOURS[dco_type])
+                    fontsize=0.8*fs, rotation=-90, color='k')#const.DCO_COLOURS[dco_type])
 
     if col_labels is None:
         col_labels = distinguishers.columns
