@@ -4,6 +4,7 @@ from scipy.interpolate import interp1d
 import matplotlib.ticker as mticker
 import astropy.units as u
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import legwork as lw
 
 from copy import copy
@@ -559,6 +560,7 @@ def plot_wdwd_distinguishers(
         log_scale=True,
         save=None, show=True,
         model_labels=None,
+        dots=False
     ):
     models = distinguishers.index.get_level_values("model").unique()
     n_models = distinguishers.index.get_level_values("model").nunique()
@@ -580,8 +582,10 @@ def plot_wdwd_distinguishers(
                 if val < 0.005:
                     zeros.append((x_offseted, dco_type, ax))
                 else:
-                    ax.bar(x_offseted, val, color=const.DCO_COLOURS[dco_type], width=0.15, label=dco_type if i == 0 else None)
-                    # ax.scatter(x_offseted, val, color=const.DCO_COLOURS[dco_type], s=100, label=dco_type if i == 0 else None)
+                    if dots:
+                        ax.scatter(x_offseted, val, color=const.DCO_COLOURS[dco_type], s=100, label=dco_type if i == 0 else None)
+                    else:
+                        ax.bar(x_offseted, val, color=const.DCO_COLOURS[dco_type], width=0.15, label=dco_type if i == 0 else None)
 
     for ax in axes.flatten():
         ax.set_xticks([])
@@ -635,6 +639,145 @@ def plot_wdwd_distinguishers(
         for x, dco_type, ax in zeros:
             og_ymin, og_ymax = ax.get_ylim()
             ax.scatter(x, 1.1e-3 if log_scale else 0.05, color=const.DCO_COLOURS[dco_type], s=100, marker="X", alpha=0.75)
+            ax.set_ylim((og_ymin, og_ymax))
+
+    if save is not None:
+        plt.savefig(save, bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    return fig, axes
+
+
+def plot_wdwd_distinguishers_variations(
+        distinguishers,
+        col_labels=[r"$f_{\rm orb}$", r"$\mathcal{M}_c$", r"$e$", r"$|z|$",
+                    r"$\{f_{\rm orb}, \mathcal{M}_c\}$", r"$\{f_{\rm orb}, \mathcal{M}_c, e\}$",
+                    r"$\{f_{\rm orb}, \mathcal{M}_c, e, |z|\}$"],
+        log_scale=True,
+        save=None, show=True,
+        model_labels=None,
+        model_colours=None,
+        cmap="tab10",
+        qualitative=True,
+        dots=False,
+        show_xs=False
+    ):
+    """Plot the fraction of each DCO type distinguishable from WDWDs, comparing model variations
+
+    Each row is a DCO type and each model variation is a separate bar within each property column.
+
+    Parameters
+    ----------
+    distinguishers : `pandas.DataFrame`
+        Fractions distinguished from WDWDs, indexed by (model, dco_type) with one column per property set
+    col_labels : `list` of `str`, optional
+        Labels for each column of ``distinguishers``
+    log_scale : `bool`, optional
+        Whether to use a logarithmic y-axis
+    save : `str`, optional
+        Path at which to save the figure, by default not saved
+    show : `bool`, optional
+        Whether to show the figure
+    model_labels : `dict`, optional
+        Mapping from model name to legend label, by default the model names are used
+    model_colours : `dict`, optional
+        Mapping from model name to colour, by default drawn from the viridis colourmap
+    dots : `bool`, optional
+        Whether to plot dots instead of bars
+
+    Returns
+    -------
+    fig : `matplotlib.figure.Figure`
+        The figure
+    axes : `numpy.ndarray` of `matplotlib.axes.Axes`
+        The axes, with shape (n_dco_types, 2)
+    """
+    models = distinguishers.index.get_level_values("model").unique()
+    n_models = len(models)
+    n_rows = len(const.DCO_TYPES)
+
+    if model_colours is None:
+        if qualitative:
+            model_colours = {model: mpl.colormaps[cmap].colors[k] for k, model in enumerate(models)}
+        else:
+            model_colours = {model: plt.get_cmap(cmap)(k / max(n_models - 1, 1)) for k, model in enumerate(models)}
+
+    fig, axes = plt.subplots(n_rows, 2, figsize=(15, 3 * n_rows), gridspec_kw={"width_ratios": [4, 3]})
+    fig.subplots_adjust(hspace=0.05, wspace=0.03)
+
+    x_vals = np.arange(len(distinguishers.columns))
+
+    # split 80% of each column's width between the models
+    bar_width = 0.8 / n_models
+
+    zeros = []
+
+    for i, col in enumerate(distinguishers.columns):
+        for k, model in enumerate(models):
+            x_offseted = x_vals[i] + (k - (n_models - 1) / 2) * bar_width
+            label = (model_labels[model] if model_labels is not None else model) if i == 0 else None
+
+            for dco_type, ax in zip(const.DCO_TYPES, axes[:, 0] if i < 4 else axes[:, 1]):
+                val = distinguishers.loc[(model, dco_type), col]
+                if val < 0.005:
+                    zeros.append((x_offseted, model, ax))
+                else:
+                    if dots:
+                        ax.scatter(x_offseted, val, color=model_colours[model], s=100, label=label)
+                    else:
+                        ax.bar(x_offseted, val, color=model_colours[model], width=bar_width, label=label)
+
+    for ax in axes.flatten():
+        ax.set_xticks([])
+        ax.set_xticklabels([])
+        if not log_scale:
+            ax.yaxis.set_minor_locator(plt.MultipleLocator(0.1))
+
+        if log_scale:
+            ax.set_yscale("log")
+            ax.set_ylim(1e-3, 1)
+        else:
+            ax.set_ylim(0.0, 1.09)
+        ax.grid(which="both", alpha=0.2, axis='y')
+        ax.set_axisbelow(True)
+
+    for ax_set, x_set in zip([axes[:, 0], axes[:, 1]], [[0, 1, 2], [4, 5]]):
+        for ax in ax_set:
+            for x in x_set:
+                ax.axvline(x + 0.5, color='k', ls="-", lw=1)
+
+    for ax in axes[:, 0]:
+        ax.set_xlim(-0.5, 3.5)
+
+    # label each row with its DCO type on the right-hand side
+    for ax, dco_type in zip(axes[:, 1], const.DCO_TYPES):
+        ax.set_xlim(3.5, 6.5)
+        ax.set_yticklabels([])
+        ax.tick_params(axis='y', which='both', left=False, right=False)
+        ax.annotate(dco_type, xy=(1.05, 0.5), xycoords="axes fraction", ha='center', va="center",
+                    fontsize=0.8*fs, rotation=-90, fontweight="bold", color=const.DCO_COLOURS[dco_type])
+
+    if col_labels is None:
+        col_labels = distinguishers.columns
+
+    for i, l in zip([0, 1, 2, 3], col_labels):
+        axes[-1, 0].annotate(l, xy=(i, -0.05), xycoords=("data", "axes fraction"), ha='center', va="top", fontsize=0.9*fs)
+    for i, l in zip([4, 5, 6], col_labels[4:]):
+        axes[-1, 1].annotate(l, xy=(i, -0.05), xycoords=("data", "axes fraction"), ha='center', va="top", fontsize=0.7*fs)
+
+    axes[n_rows // 2, 0].set_ylabel("Fraction distinguished from WDWDs")
+
+    axes[0, 0].legend(loc='lower center', ncol=min(n_models, 4), fontsize=0.8*fs, bbox_to_anchor=(0.88, 1.01))
+
+    fig.supxlabel("Properties used for distinguishing from WDWDs", fontsize=fs, y=0.05)
+
+    # mark values that are effectively zero with a cross at the bottom of the axis
+    if show_xs:
+        for x, model, ax in zeros:
+            og_ymin, og_ymax = ax.get_ylim()
+            ax.scatter(x, 1.1e-3 if log_scale else 0.05, color=model_colours[model], s=100, marker="X", alpha=0.75)
             ax.set_ylim((og_ymin, og_ymax))
 
     if save is not None:
