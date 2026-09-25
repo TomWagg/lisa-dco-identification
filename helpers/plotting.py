@@ -493,8 +493,9 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
     axes[0, 0].axvspan(np.log10(3e-4), -2, color='k', alpha=0.1)
     axes[0, 0].set(
         xlim=(-4.5, -2),
-        xlabel=r"$f_{\rm orb} + \Delta f_{\rm orb} \, [\rm Hz]$",
-        ylabel=r"$F_{\rm LISA, 8yr} (< f_{\rm orb} + \Delta f_{\rm orb})$",
+        # xlabel=r"$f_{\rm orb} + \Delta f_{\rm orb} \, [\rm Hz]$",
+        xlabel=r"Threshold frequency, $f_{\rm t} \, [\rm Hz]$",
+        ylabel=r"$F_{\rm LISA, 8yr} (f_{\rm orb} + \Delta f_{\rm orb} < f_{\rm t})$",
         yscale="linear",
         ylim=(0, 1),
     )
@@ -514,8 +515,10 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
     top_ax.set_xticklabels([])
 
     axes[1, 1].set(
-        xlabel="Height above Galactic plane, |z| [kpc]",
-        ylabel=r"$N_{\rm LISA, 8yr} (> |z|)$"
+        xlabel=r"Threshold height, $|z|_{\rm t} \, [\rm kpc]$",
+        ylabel=r"$N_{\rm LISA, 8yr} (|z| > |z|_{\rm t})$"
+        # xlabel="Height above Galactic plane, |z| [kpc]",
+        # ylabel=r"$N_{\rm LISA, 8yr} (> |z|)$"
     )
         
     axes[0, 1].set(
@@ -523,8 +526,10 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
         ylim=(0, None),
         # ylim=(1e-1, None),
         xlim=(-1.5, 1.1),
-        xlabel=r"$\mathcal{M}_c - \Delta \mathcal{M}_c \, [\rm M_\odot]$",
-        ylabel=r"$F_{\rm LISA, 8yr} (> \mathcal{M}_c - \Delta \mathcal{M}_c)$"
+        xlabel=r"Threshold chirp mass, $\mathcal{M}_{c, \rm t} \, [\rm M_\odot]$",
+        ylabel=r"$F_{\rm LISA, 8yr} (\mathcal{M}_c - \Delta \mathcal{M}_c > \mathcal{M}_{c, \rm t})$"
+        # xlabel=r"$\mathcal{M}_c - \Delta \mathcal{M}_c \, [\rm M_\odot]$",
+        # ylabel=r"$F_{\rm LISA, 8yr} (> \mathcal{M}_c - \Delta \mathcal{M}_c)$"
     )
     max_wdwd_mass = lw.utils.chirp_mass(1.44, 1.44)
     axes[0, 1].axvline(np.log10(max_wdwd_mass), color='k', ls="--", lw=2)
