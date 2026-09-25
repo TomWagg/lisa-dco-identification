@@ -400,7 +400,7 @@ def bootstrap_cdf(data, n_samples=25_000, n_bootstraps=10, n_bins=250, weights=N
 
 
 def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detectable_pops, counts,
-                             n_boot=5000, save=None, show=True):
+                             n_boot=5000, save=None, show=True, inner_ring=True):
 
     height_where_exceeds_wdwds = {}
 
@@ -447,22 +447,35 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
 
         pie_ax = axes[1, 0].inset_axes(pie_positions[const.DCO_TYPES.index(dco_type)], transform=axes[1, 0].transAxes)
 
-        # outer ring is with the frequency cut, inner ring is without
-        for vals, rad, alpha in zip(
-            [[measureable_ecc, 1 - measureable_ecc], [measureable_ecc_no_fmin, 1 - measureable_ecc_no_fmin]],
-            [1, 0.7],
-            [1, 0.8]
-        ):
+        if inner_ring:
+
+            # outer ring is with the frequency cut, inner ring is without
+            for vals, rad, alpha in zip(
+                [[measureable_ecc, 1 - measureable_ecc], [measureable_ecc_no_fmin, 1 - measureable_ecc_no_fmin]],
+                [1, 0.7],
+                [1, 0.8]
+            ):
+                pie_ax.pie(
+                    vals,
+                    colors=[const.DCO_COLOURS[dco_type], "lightgrey"],
+                    startangle=90,
+                    counterclock=False,
+                    radius=rad,
+                    wedgeprops=dict(width=0.3, edgecolor='white', alpha=alpha)
+                )
+            pie_ax.annotate(dco_type, xy=(0, 0), ha='center', va='center', fontsize=0.6*fs,
+                            fontweight='bold', color=const.DCO_COLOURS[dco_type])
+        else:
             pie_ax.pie(
-                vals,
+                [measureable_ecc, 1 - measureable_ecc],
                 colors=[const.DCO_COLOURS[dco_type], "lightgrey"],
                 startangle=90,
                 counterclock=False,
-                radius=rad,
-                wedgeprops=dict(width=0.3, edgecolor='white', alpha=alpha)
+                radius=1,
+                wedgeprops=dict(width=0.5, edgecolor='white', alpha=1)
             )
-        pie_ax.annotate(dco_type, xy=(0, 0), ha='center', va='center', fontsize=0.6*fs,
-                        fontweight='bold', color=const.DCO_COLOURS[dco_type])
+            pie_ax.annotate(dco_type, xy=(0, 0), ha='center', va='center', fontsize=0.6*fs,
+                            fontweight='bold', color=const.DCO_COLOURS[dco_type])
 
         # remove the default ±1.25 padding so the outer ring touches the axis edges
         pie_ax.set_xlim(-1.02, 1.02)
