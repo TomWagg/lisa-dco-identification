@@ -166,13 +166,14 @@ def format_detections(lo, mid, hi, sig=2, missing=r"\nodata"):
 def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, dco_types=None,
                     duration=8, snr_lim=12, data_dir=DATA_DIR, sig=1, missing=r"\nodata",
                     label="tab:detections", caption=None, starred=True, just_tabular=True,
-                    detections=None, fiducial="fiducial", optimistic_label="Optimistic CE", position=None):
+                    detections=None, fiducial="fiducial", optimistic_label="Optimistic CE",
+                    position=None, optimistic_pos=2):
     """Write a LaTeX table of detectable DCO numbers, with models as rows.
 
     Columns are grouped by DCO type, then detector, then the position used for the sky
     localisation. Every model uses the pessimistic common-envelope variant, except that the
     fiducial model is additionally shown with the optimistic variant as though it were a
-    separate model, in the row directly after it.
+    separate model, in the row given by `optimistic_pos`.
 
     Parameters
     ----------
@@ -216,13 +217,16 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
         Which entry of `POSITIONS` to tabulate, by default None, which includes every
         position. When a single position is given the position header level is dropped
         since every column would be labelled identically
+    optimistic_pos : `int`, optional
+        Row index of the optimistic fiducial row, by default 1 (directly after the fiducial
+        model when it is first in `models`). Negative values count from the end, so -1
+        places it last
 
     Returns
     -------
     table : `str`
         The LaTeX table
     """
-    model_labels = {} if model_labels is None else model_labels
     dco_types = DCO_TYPES if dco_types is None else dco_types
 
     if position is not None and position not in POSITIONS:
@@ -230,21 +234,10 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
     positions = POSITIONS if position is None else [position]
     show_position = len(positions) > 1
 
-    optimistic, pessimistic = VARIANTS[0], VARIANTS[1]
-    optimistic_label = VARIANT_LABELS[optimistic] if optimistic_label is None else optimistic_label
-
-    # each row is a (model, variant, label) triple, with the optimistic fiducial
-    # inserted directly after the fiducial model
-    table_rows = []
-    for model in models:
-        text = model_labels.get(model, model.replace("_", r"\_"))
-        table_rows.append((model, pessimistic, text))
-        if model == fiducial:
-            table_rows.append((model, optimistic, optimistic_label))
-
-    # rows are labelled by letter (to be described in the caption) to keep the table narrow
-    letters = [chr(ord("A") + i) for i in range(len(table_rows))]
-    key = {letter: text for letter, (_, _, text) in zip(letters, table_rows)}
+    # each row is a (letter, model, variant) triple, with the optimistic fiducial
+    # inserted at the requested position
+    rows, key = _model_rows(models, model_labels=model_labels, fiducial=fiducial,
+                            optimistic_label=optimistic_label, optimistic_pos=optimistic_pos)
 
     detectors = DETECTORS if include_DECIGO else ["lisa"]
     show_detector = len(detectors) > 1
@@ -297,7 +290,7 @@ def detection_table(models, n_targets, model_labels=None, include_DECIGO=False, 
     lines.append(r"\midrule")
 
     # one row per model (plus the optimistic fiducial)
-    for letter, (model, variant, _) in zip(letters, table_rows):
+    for letter, model, variant in rows:
         row = [key[letter]]
         for dco, det, pos in data_cols:
             lo, mid, hi = detections.loc[(model, variant, dco, det, pos)]
@@ -315,15 +308,15 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                     log=True, floor=0.1, sharey=False, fig=None, ax=None, show=True,
                     detections=None, save=None, show_sec_ax=False, sec_duration=8,
                     fiducial="fiducial", optimistic_label=None, letter_labels=False,
-                    ylim=None):
+                    ylim=None, optimistic_pos=2):
     """Plot the number of detectable DCOs for each model variation.
 
     Each model gets its own position on the x-axis, using the pessimistic common-envelope
     variant, except that the fiducial model is additionally shown with the optimistic variant
-    as though it were a separate model, directly after it (matching `detection_table`). DCO
-    types are distinguished by colour, and initial/final positions by open/filled markers.
-    Each detector gets its own panel, stacked vertically with a shared x-axis. Missing
-    combinations are simply absent from the plot.
+    as though it were a separate model, in the column given by `optimistic_pos` (matching
+    `detection_table`). DCO types are distinguished by colour, and initial/final positions by
+    open/filled markers. Each detector gets its own panel, stacked vertically with a shared
+    x-axis. Missing combinations are simply absent from the plot.
 
     Parameters
     ----------
@@ -381,6 +374,12 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
         Tick label for the optimistic fiducial column, by default "Optimistic CE"
     letter_labels : `bool`, optional
         Whether to label columns A, B, C, ... to match the tables, by default False
+    ylim : `tuple` of `float`, optional
+        Limits for the y-axis, by default None (automatic)
+    optimistic_pos : `int`, optional
+        Column index of the optimistic fiducial column, by default 1 (directly after the
+        fiducial model when it is first in `models`). Negative values count from the end, so
+        -1 places it last
 
     Returns
     -------
@@ -399,8 +398,8 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
         detections = load_detections(models, n_targets, detectors=detectors, dco_types=dco_types,
                                      duration=duration, data_dir=data_dir, snr_lim=snr_lim)
 
-    # one column per model (pessimistic), plus the optimistic fiducial straight after it
-    rows, _ = _model_rows(models, fiducial=fiducial)
+    # one column per model (pessimistic), plus the optimistic fiducial at the requested position
+    rows, _ = _model_rows(models, fiducial=fiducial, optimistic_pos=optimistic_pos)
     columns = [(model, variant) for _, model, variant in rows]
 
     def default_label(model, variant):
@@ -451,9 +450,9 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
                     upper.append(max(hi - med, 0))
 
                     # if the fiducial, pessimistic, final positions, shade across every axis
-                    if model == "fiducial" and variant == "_pessimistic" and pos == "final_pos":
-                        # axis.axhspan(mid[0] - lower[0], mid[0] + upper[0], color=colours[dco], alpha=0.1, zorder=0)
-                        axis.axhline(mid[0], color=colours[dco], zorder=0, linestyle="--", lw=1.5)
+                    if model == fiducial and variant == VARIANTS[1] and pos == "final_pos":
+                        # axis.axhspan(med - lower[-1], med + upper[-1], color=colours[dco], alpha=0.1, zorder=0)
+                        axis.axhline(med, color=colours[dco], zorder=0, linestyle="--", lw=1.5)
 
                 if len(x) == 0:
                     continue
@@ -534,12 +533,14 @@ def plot_detections(models, n_targets, column_labels=None, detectors="lisa", dco
     return fig, ax if len(detectors) > 1 else axes[0]
 
 
-def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label=None):
-    """Build the lettered rows shared by `detection_table` and `n_targets_table`.
+def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label=None,
+                optimistic_pos=2):
+    """Build the lettered rows shared by `detection_table`, `n_targets_table` and
+    `plot_detections`.
 
     Every model uses the pessimistic common-envelope variant, except that the fiducial model
     is additionally included with the optimistic variant as though it were a separate model,
-    directly after it.
+    placed at index `optimistic_pos` in the final ordering.
 
     Parameters
     ----------
@@ -552,6 +553,10 @@ def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label
     optimistic_label : `str`, optional
         Full label for the optimistic fiducial row, by default the optimistic entry of
         `VARIANT_LABELS`
+    optimistic_pos : `int`, optional
+        Index of the optimistic fiducial row in the final ordering, by default 1 (directly
+        after the fiducial model when it is first in `models`). Negative values count from
+        the end, so -1 places it last. Out-of-range values are clipped
 
     Returns
     -------
@@ -564,11 +569,13 @@ def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label
     optimistic, pessimistic = VARIANTS[0], VARIANTS[1]
     optimistic_label = VARIANT_LABELS[optimistic] if optimistic_label is None else optimistic_label
 
-    entries = []
-    for model in models:
-        entries.append((model, pessimistic, model_labels.get(model, model.replace("_", r"\_"))))
-        if model == fiducial:
-            entries.append((model, optimistic, optimistic_label))
+    entries = [(model, pessimistic, model_labels.get(model, model.replace("_", r"\_")))
+               for model in models]
+
+    # slot the optimistic fiducial into the requested position (-1 means last)
+    if fiducial in models:
+        pos = optimistic_pos + len(entries) + 1 if optimistic_pos < 0 else optimistic_pos
+        entries.insert(max(pos, 0), (fiducial, optimistic, optimistic_label))
 
     # rows are labelled by letter (to be described in the caption) to keep tables narrow
     rows, key = [], {}
@@ -578,16 +585,18 @@ def _model_rows(models, model_labels=None, fiducial="fiducial", optimistic_label
         key[letter] = text
     return rows, key
 
+
 def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
                     missing=r"\nodata", label="tab:n_targets", caption=None, starred=False,
                     just_tabular=True, fiducial="fiducial", optimistic_label="Optimistic CE",
-                    return_key=False, norms={"BHBH": 1e5, "BHNS": 1e5, "NSNS": 1e4, "BHWD": 1e4, "NSWD": 1e5}):
+                    return_key=False, norms={"BHBH": 1e5, "BHNS": 1e5, "NSNS": 1e4, "BHWD": 1e4, "NSWD": 1e5},
+                    optimistic_pos=2):
     """Write a LaTeX table of the normalisation constants for each DCO type.
 
     Rows are models, labelled by letter, and columns are DCO types, matching the layout of
     `detection_table`. Every model uses the pessimistic common-envelope variant, except that
     the fiducial model is additionally shown with the optimistic variant as though it were a
-    separate model, in the row directly after it.
+    separate model, in the row given by `optimistic_pos`.
 
     Parameters
     ----------
@@ -621,6 +630,12 @@ def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
     return_key : `bool`, optional
         Whether to also return the mapping from row letter to full model label, by default
         False
+    norms : `dict`, optional
+        Mapping from DCO type to the factor by which its values are divided
+    optimistic_pos : `int`, optional
+        Row index of the optimistic fiducial row, by default 1 (directly after the fiducial
+        model when it is first in `models`). Negative values count from the end, so -1
+        places it last
 
     Returns
     -------
@@ -632,7 +647,7 @@ def n_targets_table(models, n_targets, model_labels=None, dco_types=None, sig=2,
     """
     dco_types = DCO_TYPES if dco_types is None else dco_types
     rows, key = _model_rows(models, model_labels=model_labels, fiducial=fiducial,
-                            optimistic_label=optimistic_label)
+                            optimistic_label=optimistic_label, optimistic_pos=optimistic_pos)
     env = "table*" if starred else "table"
 
     if not just_tabular:

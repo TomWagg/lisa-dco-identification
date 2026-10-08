@@ -12,4 +12,4 @@ DCO_TYPES = ["BHBH", "BHNS", "BHWD", "NSNS", "NSWD"]
 DCO_COLOURS = dict(zip(DCO_TYPES, ["#0F145D", "#3670D5", "#38C9CC", "#38813B", "#6ACB4A"]))
 STAR_COLOUR = "#F8BA00"
 
-VARIATIONS = ["fiducial", "alpha_low", "alpha_high", "maltsev", "no_ecsn", "qcflag2"]
+VARIATIONS = ["fiducial", "qcflag2", "alpha_low", "alpha_high", "maltsev", "no_ecsn"]

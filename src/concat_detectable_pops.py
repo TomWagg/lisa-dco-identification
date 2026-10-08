@@ -4,9 +4,11 @@ import numpy as np
 import cogsworth
 import argparse
 from time import time
+import h5py as h5
 
 def get_pop_and_f_detect(folder, dco_type):
     f_detects = []
+    weights_alls = []
     pops = []
 
     pop_files = []
@@ -35,6 +37,8 @@ def get_pop_and_f_detect(folder, dco_type):
                 continue
         pops.append(cogsworth.pop.load(os.path.join(folder, pop_file), parts=["initial_binaries", "initial_galaxy", "stellar_evolution", "galactic_orbits"]))
         f_detects.append(pd.read_hdf(os.path.join(folder, f_det_file)))
+        with h5.File(os.path.join(folder, f_det_file), "r") as f:
+            weights_alls.append(f["total_weights"][:])
         print(f"  Loaded {pop_file} and {f_det_file}, {len(pops[-1])} binaries")
         if is_big_file:
             big_file_total_so_far += len(pops[-1])
@@ -56,7 +60,9 @@ def get_pop_and_f_detect(folder, dco_type):
 
     f_detect = pd.concat(f_detects, ignore_index=True)
 
-    return pop, f_detect
+    weights_all = np.concatenate(weights_alls)
+
+    return pop, f_detect, weights_all
 
 
 def main():
@@ -85,13 +91,15 @@ def main():
 
         start = time()
 
-        pop, f_detect = get_pop_and_f_detect(args.folder, dco_type)
+        pop, f_detect, weights_all = get_pop_and_f_detect(args.folder, dco_type)
 
         print(f"  Concatenation took {time() - start:.2f} seconds.")
         start = time()
 
         pop.save(output_pop_path, overwrite=True)
         f_detect.to_hdf(output_f_detect_path, key="f_detect", mode="w")
+        with h5.File(output_f_detect_path, "a") as f:
+            f.create_dataset("total_weights", data=weights_all)
         print(f"  Saving took {time() - start:.2f} seconds.")
 
 

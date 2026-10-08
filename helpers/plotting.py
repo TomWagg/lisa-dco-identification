@@ -400,7 +400,7 @@ def bootstrap_cdf(data, n_samples=25_000, n_bootstraps=10, n_bins=250, weights=N
 
 
 def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detectable_pops, counts,
-                             n_boot=5000, save=None, show=True, inner_ring=True):
+                             n_boot=5000, save=None, show=True, inner_ring=True, n_WDWD=25_000):
 
     height_where_exceeds_wdwds = {}
 
@@ -413,7 +413,7 @@ def four_panel_uncertainties(lisa_sources, lisa_pops, unc_data, wdwd_dist, detec
     ]
 
     _, _, _, _, wdwd_med, _, _ = bootstrap_cdf(
-        np.abs(wdwd_dist[wdwd_dist.tau < 100 * u.Gyr].z.value), n_samples=25_000, n_bootstraps=n_boot, norm=False,
+        np.abs(wdwd_dist[wdwd_dist.tau < 100 * u.Gyr].z.value), n_samples=n_WDWD, n_bootstraps=n_boot, norm=False,
         colour=const.STAR_COLOUR, fig=fig, ax=axes[1, 1], label="Star formation\n(WDWD)", xlim=(0, 10)
     );
 
